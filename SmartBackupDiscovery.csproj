@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net10.0;net10.0-windows</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <Version>3.3.0</Version>
+    <AssemblyName>SmartBackupDiscovery</AssemblyName>
+    <RootNamespace>SmartBackupDiscovery</RootNamespace>
+    <Authors>SmartBackupDiscovery contributors</Authors>
+    <Company>SmartBackupDiscovery contributors</Company>
+    <Description>Discover-only backup-readiness inventory scanner for authorized Windows and Linux environments.</Description>
+    <PackageLicenseExpression>MIT OR Apache-2.0</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/programew/SmartBackupDiscovery</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0-windows'">
+    <UseWindowsForms>true</UseWindowsForms>
+    <DefineConstants>$(DefineConstants);WINDOWS_BUILD</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SSH.NET" Version="2026.0.0" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' != 'net10.0-windows'">
+    <Compile Remove="DashboardForm.cs" />
+  </ItemGroup>
+</Project>

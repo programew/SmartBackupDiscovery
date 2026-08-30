@@ -1,0 +1,4 @@
+# v3: shares are always explicit either here or via --remote-share.
+PC01|C$
+PC02|C$;D$
+FILESERVER01|Data;Projects

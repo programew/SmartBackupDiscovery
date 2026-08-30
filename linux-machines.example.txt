@@ -1,0 +1,4 @@
+# HOST|ABSOLUTE_ROOTS_SEMICOLON_SEPARATED|SHA256_HOST_KEY_FINGERPRINT
+# Use fingerprints obtained through a trusted channel where possible.
+linux01|/home;/srv;/etc|REPLACE_WITH_SHA256_BASE64_FINGERPRINT
+192.168.1.41|/opt;/var/www;/var/lib|REPLACE_WITH_SHA256_BASE64_FINGERPRINT
