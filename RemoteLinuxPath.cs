@@ -7,7 +7,7 @@ public static class RemoteLinuxPath
         if (string.IsNullOrWhiteSpace(path))
             throw new ArgumentException("Linux path cannot be empty.");
         string value = path.Trim().Replace('\\', '/');
-        if (!value.StartsWith('/', StringComparison.Ordinal))
+        if (!value.StartsWith("/", StringComparison.Ordinal))
             throw new ArgumentException($"Linux path must be absolute: {path}");
 
         var parts = new List<string>();
@@ -57,14 +57,14 @@ public static class RemoteLinuxPath
         string p = NormalizeAbsolute(path);
         string r = NormalizeAbsolute(root);
         if (p.Equals(r, StringComparison.Ordinal)) return true;
-        if (r == "/") return p.StartsWith('/', StringComparison.Ordinal);
+        if (r == "/") return p.StartsWith("/", StringComparison.Ordinal);
         return p.StartsWith(r + "/", StringComparison.Ordinal);
     }
 
     public static string ToSftpUri(string host, int port, string path)
     {
         string normalized = NormalizeAbsolute(path);
-        string hostPart = host.Contains(':') && !host.StartsWith('[', StringComparison.Ordinal) ? $"[{host}]" : host;
+        string hostPart = host.Contains(':') && !host.StartsWith("[", StringComparison.Ordinal) ? $"[{host}]" : host;
         string portPart = port == 22 ? string.Empty : $":{port}";
         return $"sftp://{hostPart}{portPart}{normalized}";
     }

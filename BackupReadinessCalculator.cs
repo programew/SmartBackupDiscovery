@@ -36,6 +36,7 @@ public static class BackupReadinessCalculator
         bool inventoryProvided = gap is not null && gap.InventoryProvided;
         if (inventoryProvided)
         {
+            // The detailed analyzer already determined candidate coverage. Use byte ratio as a stable, transparent score.
             double ratio = gap!.CandidateBytes <= 0 ?
                 (gap.UncoveredCandidateCount == 0 ? 1.0 : 0.0) :
                 Math.Clamp((double)gap.CoveredCandidateBytes / gap.CandidateBytes, 0, 1);
@@ -137,6 +138,7 @@ public static class BackupReadinessCalculator
             _ => 0.0
         };
     }
+
 
     private static string FormatBytes(long bytes)
     {

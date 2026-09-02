@@ -21,7 +21,7 @@ internal sealed class ScanCheckpointWriter : IDisposable
             throw new IOException("Refusing to overwrite a reparse-point checkpoint file.");
 
         _writer = new StreamWriter(new FileStream(_path, FileMode.Create, FileAccess.Write, FileShare.Read, 64 * 1024, FileOptions.SequentialScan));
-        _writer.WriteLine(JsonSerializer.Serialize(new { type = "scanCheckpoint", formatVersion = "3.3", startedAtUtc = DateTime.UtcNow }, CheckpointOptions));
+        _writer.WriteLine(JsonSerializer.Serialize(new { type = "scanCheckpoint", formatVersion = "3.4", startedAtUtc = DateTime.UtcNow }, CheckpointOptions));
         _writer.Flush();
     }
 

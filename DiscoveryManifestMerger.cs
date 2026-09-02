@@ -39,9 +39,9 @@ public static class DiscoveryManifestMerger
 
         return new DiscoveryManifest
         {
-            FormatVersion = "3.3",
-            ApplicationVersion = "3.3.0",
-            RuleSetVersion = "discover-only-3.3-linux-sftp-jvm-fastpath",
+            FormatVersion = "3.4",
+            ApplicationVersion = "3.4.0",
+            RuleSetVersion = "discover-only-3.4-network-inventory-linux-sftp-jvm-fastpath",
             GeneratedAtUtc = local.GeneratedAtUtc,
             ScannerHost = local.ScannerHost,
             Sources = local.Sources.Concat(remote.Sources).GroupBy(x => x.Id, StringComparer.OrdinalIgnoreCase).Select(x => x.First()).ToArray(),

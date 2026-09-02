@@ -92,7 +92,8 @@ public sealed class FileScanner
                 }
 
                 var (dir, depth, inheritedProjectRoot) = stack.Pop();
-                if (!visited.Add(dir)) continue;
+                if (!visited.Add(dir))
+                    continue;
                 if (depth > limits.MaxDepth)
                 {
                     completed = false;
@@ -149,7 +150,8 @@ public sealed class FileScanner
                         continue;
                     }
 
-                    if ((attrs & FileAttributes.Directory) != 0) continue;
+                    if ((attrs & FileAttributes.Directory) != 0)
+                        continue;
                     if ((attrs & FileAttributes.ReparsePoint) != 0)
                     {
                         rootReparseFiles++; totalReparseFiles++;
@@ -163,18 +165,22 @@ public sealed class FileScanner
                         break;
                     }
 
-                    if (currentProjectRoot is not null) AddProjectVolume(currentProjectRoot, entry);
+                    if (currentProjectRoot is not null)
+                        AddProjectVolume(currentProjectRoot, entry);
 
                     bool isMarker = FileClassifier.IsProjectMarkerName(entry.Name);
                     bool fastProjectMember = currentProjectRoot is not null && !isMarker && !IsAlwaysClassifyInProject(entry.Name);
                     if (fastProjectMember)
                     {
                         projectFastPathFiles++;
-                        if (FileClassifier.IsSourceCodeFileName(entry.Name) || FileClassifier.WouldProbeSignature(entry.Name)) signatureProbesAvoided++;
+                        if (FileClassifier.IsSourceCodeFileName(entry.Name) || FileClassifier.WouldProbeSignature(entry.Name))
+                            signatureProbesAvoided++;
                         MaybeProgress(dir);
                         continue;
                     }
 
+                    // Loose source code outside a detected project should never incur a signature read.
+                    // It is metadata-only unless the surrounding directory is recognized as a source tree.
                     if (currentProjectRoot is null && FileClassifier.IsSourceCodeFileName(entry.Name))
                     {
                         signatureProbesAvoided++;
@@ -182,19 +188,31 @@ public sealed class FileScanner
                         continue;
                     }
 
-                    if (LinuxBackupHints.ShouldAvoidSignatureProbe(entry.FullName) && FileClassifier.WouldProbeSignature(entry.Name)) signatureProbesAvoided++;
+                    if (LinuxBackupHints.ShouldAvoidSignatureProbe(entry.FullName) && FileClassifier.WouldProbeSignature(entry.Name))
+                        signatureProbesAvoided++;
 
                     var source = SourceIdentityProvider.FindSourceForPath(sources, entry.FullName);
                     string sourceId = source?.Id ?? "unknown";
                     string? remoteHost = source?.Kind == SourceKind.Smb ? source.HostReference : null;
                     try
                     {
-                        var candidate = FileClassifier.Analyze(entry.FullName, sourceId, inspectOfficeProtection, profile, governor, remoteHost, attrs);
+                        var candidate = FileClassifier.Analyze(
+                            entry.FullName,
+                            sourceId,
+                            inspectOfficeProtection,
+                            profile,
+                            governor,
+                            remoteHost,
+                            attrs);
+
                         if (isMarker)
                         {
                             var markerEvidence = candidate.Evidence.Any(x => x.RuleId == "PROJECT_MARKER")
                                 ? candidate.Evidence
-                                : candidate.Evidence.Concat(new[] { new DetectionEvidence("PROJECT_MARKER", "Project marker file", "project", 140, EvidenceConfidence.High) }).ToArray();
+                                : candidate.Evidence.Concat(new[]
+                                {
+                                    new DetectionEvidence("PROJECT_MARKER", "Project marker file", "project", 140, EvidenceConfidence.High)
+                                }).ToArray();
                             candidate = candidate with
                             {
                                 Score = Math.Max(140, candidate.Score),
@@ -217,6 +235,7 @@ public sealed class FileScanner
                         rootErrors++;
                         AddError(errors, $"Classification failed for {entry.FullName}: {ex.Message}");
                     }
+
                     MaybeProgress(dir);
                 }
 
@@ -224,7 +243,10 @@ public sealed class FileScanner
                 {
                     FileAttributes attrs;
                     try { attrs = entry.Attributes; } catch { continue; }
-                    if ((attrs & FileAttributes.Directory) == 0 || (attrs & FileAttributes.ReparsePoint) != 0) continue;
+                    if ((attrs & FileAttributes.Directory) == 0)
+                        continue;
+                    if ((attrs & FileAttributes.ReparsePoint) != 0)
+                        continue;
                     if (currentProjectRoot is not null && FileClassifier.ShouldSkipProjectDirectory(entry.FullName))
                     {
                         rootPolicy++; totalPolicySkipped++; generatedDirectoriesSkipped++;
@@ -236,16 +258,26 @@ public sealed class FileScanner
                         if (platformReason == PlatformSkipReason.MountBoundary) mountBoundariesSkipped++;
                         continue;
                     }
-                    if (depth + 1 <= limits.MaxDepth) stack.Push((entry.FullName, depth + 1, currentProjectRoot));
+                    if (depth + 1 <= limits.MaxDepth)
+                        stack.Push((entry.FullName, depth + 1, currentProjectRoot));
                 }
             }
 
             coverageRoots.Add(new RootCoverage(root, true, completed, rootDirs, rootFiles, rootCandidates, rootPolicy, rootReparseDirs, rootReparseFiles, rootErrors));
         }
 
-        var ordered = allCandidates.Values.OrderByDescending(x => x.Score).ThenBy(x => x.Path, PathRules.Comparer).ToArray();
-        var volumes = projectRoots.OrderBy(x => x, PathRules.Comparer)
-            .Select(projectRoot => new ProjectVolumeStat(projectRoot, projectVolumeFiles.GetValueOrDefault(projectRoot), projectVolumeBytes.GetValueOrDefault(projectRoot), jvmProjectRoots.Contains(projectRoot)))
+        var ordered = allCandidates.Values
+            .OrderByDescending(x => x.Score)
+            .ThenBy(x => x.Path, PathRules.Comparer)
+            .ToArray();
+
+        var volumes = projectRoots
+            .OrderBy(x => x, PathRules.Comparer)
+            .Select(projectRoot => new ProjectVolumeStat(
+                projectRoot,
+                projectVolumeFiles.GetValueOrDefault(projectRoot),
+                projectVolumeBytes.GetValueOrDefault(projectRoot),
+                jvmProjectRoots.Contains(projectRoot)))
             .ToArray();
 
         return new ScanResult(
@@ -259,7 +291,8 @@ public sealed class FileScanner
         void MaybeProgress(string currentDirectory)
         {
             long now = Environment.TickCount64;
-            if (progress is null || now - lastProgressTicks < ProgressIntervalMilliseconds) return;
+            if (progress is null || now - lastProgressTicks < ProgressIntervalMilliseconds)
+                return;
             lastProgressTicks = now;
             progress(new ScanProgress(totalFiles, totalDirs, totalCandidates, currentDirectory, governor.AdaptiveDelayMilliseconds));
         }
@@ -267,63 +300,99 @@ public sealed class FileScanner
         void AddProjectVolume(string projectRoot, FileSystemInfo entry)
         {
             long size = 0;
-            try { size = entry is FileInfo file ? file.Length : new FileInfo(entry.FullName).Length; } catch { }
+            try
+            {
+                if (entry is FileInfo file)
+                    size = file.Length;
+                else
+                    size = new FileInfo(entry.FullName).Length;
+            }
+            catch { }
             projectVolumeFiles[projectRoot] = projectVolumeFiles.GetValueOrDefault(projectRoot) + 1;
             projectVolumeBytes[projectRoot] = SaturatingAdd(projectVolumeBytes.GetValueOrDefault(projectRoot), Math.Max(0, size));
         }
     }
 
-    private static bool DirectoryHasProjectMarker(IEnumerable<FileSystemInfo> entries) => entries.Any(entry => FileClassifier.IsProjectMarkerName(entry.Name));
+    private static bool DirectoryHasProjectMarker(IEnumerable<FileSystemInfo> entries) =>
+        entries.Any(entry => FileClassifier.IsProjectMarkerName(entry.Name));
 
-    private static bool TryDetectJvmProjectRoot(string dir, IReadOnlyList<FileSystemInfo> entries, string scanRoot, int depth, out string? projectRoot)
+    private static bool TryDetectJvmProjectRoot(
+        string dir,
+        IReadOnlyList<FileSystemInfo> entries,
+        string scanRoot,
+        int depth,
+        out string? projectRoot)
     {
         projectRoot = null;
+
         if (TryInferJvmRootFromPath(dir, out string? inferred))
         {
             projectRoot = SourceIdentityProvider.IsSameOrUnder(inferred!, scanRoot) ? inferred : scanRoot;
             return true;
         }
+
+        // Only issue nested existence probes when this directory actually has a "src" child.
+        // That keeps the optimization cheap on large non-source trees and SMB shares.
         bool hasSrc = entries.Any(x => IsDirectory(x) && x.Name.Equals("src", StringComparison.OrdinalIgnoreCase));
         if (hasSrc && HasStandardJvmLayout(dir))
         {
             projectRoot = dir;
             return true;
         }
+
+        // If the user starts directly at ...\src or ...\src\main, recognize the source container
+        // without requiring traversal back to a build-file-bearing project root.
         if (TryDetectJvmSourceContainer(dir, entries, scanRoot, out string? containerRoot))
         {
             projectRoot = containerRoot;
             return true;
         }
+
+        // Fallback for old source archives without Maven/Gradle metadata. This is restricted to
+        // the user-selected root and uses a bounded metadata-only look-ahead so a broad drive/root
+        // cannot accidentally become a project merely because it contains source somewhere below.
         if (depth == 0 && LooksLikeLooseJvmSourceRoot(dir, entries))
         {
             projectRoot = dir;
             return true;
         }
+
         return false;
     }
+
 
     private static bool LooksLikeLooseJvmSourceRoot(string dir, IReadOnlyList<FileSystemInfo> entries)
     {
         var directFiles = entries.Where(x => !IsDirectory(x)).ToArray();
         int directJvm = directFiles.Count(x => FileClassifier.IsJvmSourceFileName(x.Name));
-        if (directJvm >= 5 && directJvm * 100 >= Math.Max(1, directFiles.Length) * 60) return true;
+        if (directJvm >= 5 && directJvm * 100 >= Math.Max(1, directFiles.Length) * 60)
+            return true;
 
         string trimmed = dir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         string root = (Path.GetPathRoot(dir) ?? string.Empty).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        if (trimmed.Equals(root, PathRules.Comparison)) return false;
+        if (trimmed.Equals(root, PathRules.Comparison))
+            return false;
 
         string name = Path.GetFileName(trimmed);
         bool sourceLikeName = new[] { "src", "source", "sources", "java", "code", "repo", "repos", "repository", "workspace", "project", "projects" }
             .Any(term => name.Contains(term, StringComparison.OrdinalIgnoreCase));
         bool hasPackageRoot = entries.Any(x => IsDirectory(x) &&
-            (x.Name.Equals("com", StringComparison.OrdinalIgnoreCase) || x.Name.Equals("org", StringComparison.OrdinalIgnoreCase) ||
-             x.Name.Equals("net", StringComparison.OrdinalIgnoreCase) || x.Name.Equals("io", StringComparison.OrdinalIgnoreCase) || x.Name.Equals("edu", StringComparison.OrdinalIgnoreCase)));
-        if (!sourceLikeName && !hasPackageRoot) return false;
+            (x.Name.Equals("com", StringComparison.OrdinalIgnoreCase) ||
+             x.Name.Equals("org", StringComparison.OrdinalIgnoreCase) ||
+             x.Name.Equals("net", StringComparison.OrdinalIgnoreCase) ||
+             x.Name.Equals("io", StringComparison.OrdinalIgnoreCase) ||
+             x.Name.Equals("edu", StringComparison.OrdinalIgnoreCase)));
+        if (!sourceLikeName && !hasPackageRoot)
+            return false;
 
-        const int maxDirectories = 64, maxFiles = 200, maxDepth = 5;
+        const int maxDirectories = 64;
+        const int maxFiles = 200;
+        const int maxDepth = 5;
         int directories = 0, files = 0, jvm = 0;
         var queue = new Queue<(string Path, int Depth)>();
-        foreach (var child in entries.Where(IsDirectory)) queue.Enqueue((child.FullName, 1));
+        foreach (var child in entries.Where(IsDirectory))
+            queue.Enqueue((child.FullName, 1));
+
         while (queue.Count > 0 && directories < maxDirectories && files < maxFiles)
         {
             var (path, depth) = queue.Dequeue();
@@ -337,6 +406,7 @@ public sealed class FileScanner
                 children = di.EnumerateFileSystemInfos();
             }
             catch { continue; }
+
             try
             {
                 foreach (FileSystemInfo child in children)
@@ -344,7 +414,8 @@ public sealed class FileScanner
                     if (files >= maxFiles) break;
                     if (IsDirectory(child))
                     {
-                        if (depth < maxDepth && !FileClassifier.ShouldSkipProjectDirectory(child.FullName)) queue.Enqueue((child.FullName, depth + 1));
+                        if (depth < maxDepth && !FileClassifier.ShouldSkipProjectDirectory(child.FullName))
+                            queue.Enqueue((child.FullName, depth + 1));
                         continue;
                     }
                     files++;
@@ -354,19 +425,27 @@ public sealed class FileScanner
             }
             catch { }
         }
+
         return jvm >= 5 && jvm * 100 >= Math.Max(1, files) * 60;
     }
 
-    private static bool TryDetectJvmSourceContainer(string dir, IReadOnlyList<FileSystemInfo> entries, string scanRoot, out string? projectRoot)
+    private static bool TryDetectJvmSourceContainer(
+        string dir,
+        IReadOnlyList<FileSystemInfo> entries,
+        string scanRoot,
+        out string? projectRoot)
     {
         projectRoot = null;
         string name = Path.GetFileName(dir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+
         if (name.Equals("src", StringComparison.OrdinalIgnoreCase))
         {
             bool hasLayout = new[]
             {
-                Path.Combine("main", "java"), Path.Combine("test", "java"), Path.Combine("main", "kotlin"), Path.Combine("test", "kotlin"),
-                Path.Combine("main", "scala"), Path.Combine("test", "scala"), Path.Combine("main", "groovy"), Path.Combine("test", "groovy")
+                Path.Combine("main", "java"), Path.Combine("test", "java"),
+                Path.Combine("main", "kotlin"), Path.Combine("test", "kotlin"),
+                Path.Combine("main", "scala"), Path.Combine("test", "scala"),
+                Path.Combine("main", "groovy"), Path.Combine("test", "groovy")
             }.Any(relative => Directory.Exists(Path.Combine(dir, relative)));
             if (hasLayout)
             {
@@ -384,8 +463,10 @@ public sealed class FileScanner
             if (src is not null && src.Name.Equals("src", StringComparison.OrdinalIgnoreCase))
             {
                 bool hasLanguageDir = entries.Any(x => IsDirectory(x) &&
-                    (x.Name.Equals("java", StringComparison.OrdinalIgnoreCase) || x.Name.Equals("kotlin", StringComparison.OrdinalIgnoreCase) ||
-                     x.Name.Equals("scala", StringComparison.OrdinalIgnoreCase) || x.Name.Equals("groovy", StringComparison.OrdinalIgnoreCase)));
+                    (x.Name.Equals("java", StringComparison.OrdinalIgnoreCase) ||
+                     x.Name.Equals("kotlin", StringComparison.OrdinalIgnoreCase) ||
+                     x.Name.Equals("scala", StringComparison.OrdinalIgnoreCase) ||
+                     x.Name.Equals("groovy", StringComparison.OrdinalIgnoreCase)));
                 if (hasLanguageDir)
                 {
                     string inferred = src.Parent?.FullName ?? src.FullName;
@@ -394,6 +475,7 @@ public sealed class FileScanner
                 }
             }
         }
+
         return false;
     }
 
@@ -405,8 +487,10 @@ public sealed class FileScanner
             DirectoryInfo? cursor = new DirectoryInfo(Path.GetFullPath(dir));
             while (cursor is not null)
             {
-                bool language = cursor.Name.Equals("java", StringComparison.OrdinalIgnoreCase) || cursor.Name.Equals("kotlin", StringComparison.OrdinalIgnoreCase) ||
-                                cursor.Name.Equals("scala", StringComparison.OrdinalIgnoreCase) || cursor.Name.Equals("groovy", StringComparison.OrdinalIgnoreCase);
+                bool language = cursor.Name.Equals("java", StringComparison.OrdinalIgnoreCase) ||
+                                cursor.Name.Equals("kotlin", StringComparison.OrdinalIgnoreCase) ||
+                                cursor.Name.Equals("scala", StringComparison.OrdinalIgnoreCase) ||
+                                cursor.Name.Equals("groovy", StringComparison.OrdinalIgnoreCase);
                 DirectoryInfo? mainOrTest = cursor.Parent;
                 DirectoryInfo? src = mainOrTest?.Parent;
                 if (language && mainOrTest is not null && src is not null &&
@@ -427,28 +511,43 @@ public sealed class FileScanner
     {
         string[] relative =
         {
-            Path.Combine("src", "main", "java"), Path.Combine("src", "test", "java"), Path.Combine("src", "main", "kotlin"), Path.Combine("src", "test", "kotlin"),
-            Path.Combine("src", "main", "scala"), Path.Combine("src", "test", "scala"), Path.Combine("src", "main", "groovy"), Path.Combine("src", "test", "groovy")
+            Path.Combine("src", "main", "java"), Path.Combine("src", "test", "java"),
+            Path.Combine("src", "main", "kotlin"), Path.Combine("src", "test", "kotlin"),
+            Path.Combine("src", "main", "scala"), Path.Combine("src", "test", "scala"),
+            Path.Combine("src", "main", "groovy"), Path.Combine("src", "test", "groovy")
         };
         return relative.Any(path => Directory.Exists(Path.Combine(dir, path)));
     }
 
     private static bool IsDirectory(FileSystemInfo info)
     {
-        try { return (info.Attributes & FileAttributes.Directory) != 0; } catch { return false; }
+        try { return (info.Attributes & FileAttributes.Directory) != 0; }
+        catch { return false; }
     }
 
     private static bool IsAlwaysClassifyInProject(string name)
     {
         string ext = Path.GetExtension(name);
-        return ext.Equals(".mdf", StringComparison.OrdinalIgnoreCase) || ext.Equals(".ldf", StringComparison.OrdinalIgnoreCase) ||
-               ext.Equals(".bak", StringComparison.OrdinalIgnoreCase) || ext.Equals(".sqlite", StringComparison.OrdinalIgnoreCase) ||
-               ext.Equals(".db", StringComparison.OrdinalIgnoreCase) || ext.Equals(".docx", StringComparison.OrdinalIgnoreCase) ||
-               ext.Equals(".xlsx", StringComparison.OrdinalIgnoreCase) || ext.Equals(".xls", StringComparison.OrdinalIgnoreCase) ||
-               ext.Equals(".doc", StringComparison.OrdinalIgnoreCase) || ext.Equals(".pdf", StringComparison.OrdinalIgnoreCase);
+        return ext.Equals(".mdf", StringComparison.OrdinalIgnoreCase) ||
+               ext.Equals(".ldf", StringComparison.OrdinalIgnoreCase) ||
+               ext.Equals(".bak", StringComparison.OrdinalIgnoreCase) ||
+               ext.Equals(".sqlite", StringComparison.OrdinalIgnoreCase) ||
+               ext.Equals(".db", StringComparison.OrdinalIgnoreCase) ||
+               ext.Equals(".docx", StringComparison.OrdinalIgnoreCase) ||
+               ext.Equals(".xlsx", StringComparison.OrdinalIgnoreCase) ||
+               ext.Equals(".xls", StringComparison.OrdinalIgnoreCase) ||
+               ext.Equals(".doc", StringComparison.OrdinalIgnoreCase) ||
+               ext.Equals(".pdf", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static long SaturatingAdd(long current, long value) => value > 0 && current > long.MaxValue - value ? long.MaxValue : current + value;
+    private static long SaturatingAdd(long current, long value) =>
+        value > 0 && current > long.MaxValue - value ? long.MaxValue : current + value;
+
     private static bool IsUnc(string path) => path.StartsWith(@"\\", StringComparison.Ordinal);
-    private static void AddError(List<string> errors, string error) { if (errors.Count < MaxRecordedErrors) errors.Add(error); }
+
+    private static void AddError(List<string> errors, string error)
+    {
+        if (errors.Count < MaxRecordedErrors)
+            errors.Add(error);
+    }
 }

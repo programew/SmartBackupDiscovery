@@ -1,10 +1,11 @@
-# SmartBackupDiscovery 3.3 — .NET 10 Customer Edition
+# SmartBackupDiscovery 3.4 — .NET 10 Customer Edition
 
 SmartBackupDiscovery is a **discover-only backup-readiness and important-data inventory scanner** for Windows and Linux.
 
 It is designed to answer questions such as:
 
 - What data on this machine or server is likely to be important for backup?
+- Which hosts are visible on the connected private networks and may need review?
 - Which source-code projects, database sets, VM images and protected documents exist?
 - How much data should be considered *must-copy* backup material?
 - Which important paths are not represented in the current backup inventory?
@@ -19,9 +20,12 @@ SmartBackupDiscovery **does not perform the backup itself**. It discovers, class
 
 - Local Windows discovery
 - Local Linux discovery
+- Controlled automatic private-IPv4 network inventory
+- Connected-scope and bounded directly connected-route detection
+- Passive, review-only suggestions for secondary private ranges
 - Authorized remote Windows discovery over SMB
 - Authorized remote Linux discovery over SSH/SFTP
-- Explicit host allowlists only — no CIDR sweep or automatic network discovery
+- Explicit reviewed targets for all credentialed SMB/SFTP and file discovery
 - CPU-aware adaptive throttling
 - Global network bandwidth limiting
 - Per-host network limiting
@@ -50,13 +54,14 @@ It does not:
 - copy candidate files;
 - modify discovered files;
 - upload files;
-- automatically discover hosts by scanning IP ranges;
-- enumerate arbitrary network ranges;
+- inventory public address space;
+- probe routed, unusually broad or inferred secondary ranges automatically;
+- authenticate, enumerate shares or access files during network inventory;
 - search files for passwords, tokens or connection strings;
 - execute arbitrary shell commands on remote Linux systems;
 - store supplied SMB/SSH passwords in the manifest, history or reports.
 
-Remote scans must target systems and paths that the operator is explicitly authorized to inspect.
+Automatic inventory is limited to private IPv4 connected scopes, bounded direct routes and explicitly authorized RFC1918 CIDRs. Credentialed remote scans must still target systems and paths that the operator is explicitly authorized to inspect.
 
 See [SECURITY.md](SECURITY.md) for deployment guidance.
 
@@ -306,11 +311,43 @@ SmartBackupDiscovery.exe discover `
 
 ---
 
+# Controlled automatic network inventory
+
+The `network-discover` phase builds a reviewable host inventory before any credentialed or file-level discovery. With no CIDR argument, it detects private IPv4 scopes connected to local interfaces and bounded directly connected routes.
+
+```powershell
+# Connected private scopes, using conservative defaults
+SmartBackupDiscovery.exe network-discover
+
+# An additional scope that the operator has verified and is authorized to inventory
+SmartBackupDiscovery.exe network-discover `
+  --cidr 192.168.50.0/24 `
+  --authorized-scope `
+  --exclude-cidr 192.168.50.1/32
+```
+
+The inventory combines limited host-presence signals:
+
+- ICMP response;
+- reverse DNS for responsive hosts;
+- the scanner host's existing ARP/neighbor cache;
+- configurable TCP service hints, using ports 22 and 445 by default.
+
+Network inventory is separate from file discovery. It never supplies credentials, enumerates SMB shares, opens SFTP roots, scans files or copies data. Explicit CIDRs require `--authorized-scope`, must remain entirely within RFC1918 address space and are rejected if the final address set exceeds the configured limit.
+
+The scanner passively inspects existing route and neighbor state for secondary private ranges. Routed or unusually broad routes and out-of-scope neighbors are written to `network-targets/suggested-private-scopes.generated.txt` for operator review and are not automatically probed. The application does not change addresses, subnet masks, routes, gateways, firewall rules or VLAN configuration.
+
+Generated outputs include JSON and CSV inventory, inventory history/diff, and review-only SMB/SFTP candidate lists. The Windows GUI exposes the same inventory-first workflow.
+
+See [NETWORK_DISCOVERY_GUIDE.md](NETWORK_DISCOVERY_GUIDE.md) for scope rules, limitations, load controls and output details.
+
+---
+
 # Authorized Windows SMB discovery
 
 Remote Windows discovery is Windows-only and requires explicit hosts/shares.
 
-There is no automatic network discovery.
+Only hosts and shares explicitly selected by the operator are used for credentialed SMB discovery. Network-inventory candidates are not opened automatically.
 
 ## Single host
 
@@ -893,6 +930,7 @@ dotnet SmartBackupDiscovery.dll discover \
 
 ```text
 discover [options]
+network-discover [options]
 report <manifest> [--output-dir DIR] [--privacy-mode]
 compare <previous-manifest> <current-manifest>
 selftest
@@ -917,6 +955,24 @@ help
 --cross-filesystems          Allow crossing filesystem boundaries
 --include-system-mounts      Include normally excluded system mounts
 --no-office-protection       Disable Office protection inspection
+```
+
+## Network inventory options
+
+```text
+--cidr CIDR                  Repeatable authorized private IPv4 scope
+--authorized-scope          Acknowledge authorization for explicit CIDRs
+--include-local-scopes      Include detected connected private scopes
+--exclude-cidr CIDR         Repeatable scope exclusion
+--probe-port N              Repeatable TCP service-hint port
+--no-tcp-probes             Disable TCP service hints
+--no-icmp                   Disable ICMP probes
+--no-dns                    Disable reverse DNS
+--no-neighbor-cache         Ignore existing ARP/neighbor entries
+--probe-timeout-ms N        Per-signal timeout; default 600 ms
+--network-concurrency N     Concurrent host-probe limit; default 32
+--max-hosts N               Maximum final address count; default 4,096
+--max-probes-per-second N   Host-start rate limit; default 64
 ```
 
 ## Windows SMB options
@@ -992,6 +1048,7 @@ dotnet SmartBackupDiscovery.dll selftest
 5. A discovered database data directory is not proof that copying raw files is a safe backup method.
 6. A Backup Readiness score is not a substitute for restore testing.
 7. Use resource limits on production systems and large network shares.
+8. Review generated network target lists before starting any credentialed discovery.
 
 ---
 
@@ -1001,7 +1058,8 @@ Useful repository files include:
 
 - `SECURITY.md` — security and deployment guidance
 - `CHANGELOG.md` — version changes
-- `QA_NOTES_v3.3.md` — QA notes and known validation limitations
+- `NETWORK_DISCOVERY_GUIDE.md` — network-inventory scope, controls and limitations
+- `QA_NOTES_v3.4.md` — QA notes and known validation limitations
 - `backup-inventory.example.json` — Gap Analysis example
 - `machines.example.txt` — Windows host allowlist example
 - `linux-machines.example.txt` — Linux host allowlist example

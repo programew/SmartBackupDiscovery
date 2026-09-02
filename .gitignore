@@ -6,3 +6,7 @@ publish/
 *.suo
 discovery-manifest.json
 *.scan-progress.jsonl
+network-inventory.json
+network-inventory.csv
+network-targets/
+.sbd-network-history/

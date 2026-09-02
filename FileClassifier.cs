@@ -104,6 +104,8 @@ public static class FileClassifier
         }
 
         SignatureResult signature = new(null, Array.Empty<DetectionEvidence>(), 0);
+        // Avoid opening every obvious user file merely to re-confirm its extension. Signature
+        // probing remains for unknown files (renamed SQLite/PDF/OLE/ZIP) and database candidates.
         if (!LinuxBackupHints.ShouldAvoidSignatureProbe(path) &&
             (category is FileCategory.Other or FileCategory.Database) && !projectMarker && !IsSourceCodeFileName(name))
         {

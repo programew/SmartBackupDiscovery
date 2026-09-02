@@ -1,8 +1,22 @@
-# SmartBackupDiscovery 3.3 Security Guidance
+# SmartBackupDiscovery 3.4 Security Guidance
 
 ## Security boundary
 
 SmartBackupDiscovery is a discovery and assessment tool. It does not back up, modify, upload or delete discovered files.
+
+`network-discover` is a separate, pre-credential inventory phase. It sends only bounded ICMP and selected TCP connection probes, performs reverse-DNS enrichment, and reads local route/neighbor state. It does not authenticate, enumerate shares, start SSH/SFTP sessions, inspect file metadata or trigger the file-discovery engine.
+
+## Network scope and authorization
+
+- Automatic active scope is limited to connected RFC1918 IPv4 networks and reasonably sized directly connected private routes.
+- Explicit CIDRs are rejected unless `--authorized-scope` is present, and public-address CIDRs are always rejected.
+- Routed private networks, broad on-link networks and out-of-scope neighbor-cache observations are passive suggestions only. They are not probed unless an authorized operator reviews and explicitly supplies the CIDR.
+- `--exclude-cidr`, `--max-hosts`, per-probe timeout, concurrency, probe-start rate and CPU/network policies bound the operation.
+- A TCP connect result is only a service hint. It does not prove the operating system or authorize a later credentialed scan.
+- ARP/neighbor records may be stale or misleading. Results marked `NeighborCacheOnly` and suggested scopes require human review.
+- No interface address, subnet mask, route, default gateway, firewall policy or VLAN configuration is changed.
+
+Ordinary host-side discovery cannot prove the existence of a completely silent secondary range when the scanner has no matching interface/route, neighbor entry, DNS record or other authorized telemetry. Do not treat absence from the inventory as proof that no other subnet exists.
 
 Remote Windows access is limited to explicitly supplied SMB hosts/shares. Remote Linux access is limited to explicitly supplied SSH/SFTP hosts and absolute roots. The Linux SFTP implementation does not create an SSH shell, execute commands, upload files or download file contents.
 
@@ -42,3 +56,5 @@ Standard live service directories such as PostgreSQL/MySQL are represented as lo
 ## Output protection
 
 Manifests, histories and reports may reveal sensitive filenames, server names and directory structure. Store them with access controls appropriate for backup inventory. Use `--privacy-mode` for management reports when paths should be masked.
+
+Network inventory JSON/CSV and generated target lists may reveal IP addresses, hostnames, MAC addresses and service hints. Protect these outputs as infrastructure inventory. Generated SMB/SFTP lists are candidates for review, not authorization records.

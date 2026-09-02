@@ -71,6 +71,7 @@ public static class BackupContentDetector
                 if (headerRead != 8 || !header.SequenceEqual(OleSignature))
                     return new BackupContentInspectionResult(InspectionStatus.Unsupported, inspected, Array.Empty<DetectionEvidence>());
 
+                // Best-effort structural probe for Office crypto stream names in OLE directory metadata.
                 stream.Position = 0;
                 int remaining = legacyProbeBudget;
                 byte[] buffer = new byte[Math.Min(64 * 1024, legacyProbeBudget)];

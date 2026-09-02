@@ -5,7 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <InvariantGlobalization>false</InvariantGlobalization>
-    <Version>3.3.0</Version>
+    <Version>3.4.0</Version>
     <AssemblyName>SmartBackupDiscovery</AssemblyName>
     <RootNamespace>SmartBackupDiscovery</RootNamespace>
     <Authors>SmartBackupDiscovery contributors</Authors>

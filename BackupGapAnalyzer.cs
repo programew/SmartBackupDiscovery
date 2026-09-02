@@ -189,7 +189,7 @@ public static class BackupGapAnalyzer
 
     internal static string NormalizeComparable(string path)
     {
-        string value = path.Trim().Trim('"');
+        string value = path.Trim().Trim('\"');
         if (RemoteLinuxPath.TryNormalizeSftpUri(value, out string sftp))
             return sftp;
         if (OperatingSystem.IsWindows())

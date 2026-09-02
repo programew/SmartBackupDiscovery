@@ -1,5 +1,18 @@
 # Changelog
 
+## 3.4.0
+
+- Added controlled `network-discover` / `network-inventory` private-IPv4 host inventory.
+- Added automatic connected-scope detection plus bounded directly connected route discovery.
+- Added ICMP, reverse-DNS, local ARP/neighbor-cache and configurable TCP service signals; defaults are ports 22 and 445.
+- Added RFC1918-only explicit CIDRs with required authorization acknowledgement, CIDR exclusions, overlap deduplication and a hard 65,536-address ceiling.
+- Added probe timeout, concurrency, host-start rate, CPU and network resource limits.
+- Added passive suggestions for routed/broad private routes and out-of-scope private neighbors without probing the suggested range or changing host networking.
+- Added JSON/CSV inventory, deterministic platform/transport hints, generated review target lists, inventory history and change diff.
+- Added a Windows GUI Network inventory tab with a review handoff to existing SMB/SFTP discovery.
+- Preserved separation between host inventory and credentialed/file discovery: no authentication, share enumeration or file access occurs during network inventory.
+- Fixed Linux path validation compilation and management report top-candidate rendering found by the expanded self-test suite.
+
 ## 3.3.0
 
 - Added Authorized Remote Linux discovery over SSH/SFTP from Windows or Linux scanner hosts.
