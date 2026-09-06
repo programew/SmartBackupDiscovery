@@ -24,7 +24,7 @@ public sealed class DashboardForm : Form
     private readonly NumericUpDown _cpu = new() { Minimum = 1, Maximum = 100, Value = 75, Width = 90 };
     private readonly NumericUpDown _network = new() { Minimum = 0, Maximum = 100000, Value = 80, Width = 90 };
     private readonly CheckBox _privacy = new() { Text = "Privacy mode in management reports", Checked = false, AutoSize = true };
-    private readonly Button _start = new() { Text = "Start discovery", AutoSize = true };
+    private readonly Button _start = new() { Text = "Start file scan", AutoSize = true };
     private readonly Button _openManifest = new() { Text = "Open manifest...", AutoSize = true };
     private readonly Button _openReport = new() { Text = "Open HTML report", AutoSize = true, Enabled = false };
     private readonly TextBox _log = new() { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Both, WordWrap = false, Dock = DockStyle.Fill };
@@ -95,8 +95,8 @@ public sealed class DashboardForm : Form
         _networkGrid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "MAC", DataPropertyName = "MacAddress", FillWeight = 25 });
 
         var tabs = new TabControl { Dock = DockStyle.Fill };
-        tabs.TabPages.Add(BuildNetworkTab());
         tabs.TabPages.Add(BuildScanTab());
+        tabs.TabPages.Add(BuildNetworkTab());
         tabs.TabPages.Add(BuildDashboardTab());
         Controls.Add(tabs);
 
@@ -164,11 +164,17 @@ public sealed class DashboardForm : Form
 
     private TabPage BuildScanTab()
     {
-        var page = new TabPage("Discover") { AutoScroll = true };
+        var page = new TabPage("File scan") { AutoScroll = true };
         var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, Padding = new Padding(14) };
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+        var actionPanel = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight, Padding = new Padding(0, 0, 0, 8) };
+        actionPanel.Controls.Add(_start);
+        actionPanel.Controls.Add(_openManifest);
+        actionPanel.Controls.Add(_openReport);
+        actionPanel.Controls.Add(_status);
 
         var fields = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 3 };
         fields.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 190));
@@ -201,15 +207,9 @@ public sealed class DashboardForm : Form
         resourcePanel.Controls.Add(_privacy);
         AddRow(fields, "Resource/report policy", resourcePanel, new Label());
 
-        var actionPanel = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight };
-        actionPanel.Controls.Add(_start);
-        actionPanel.Controls.Add(_openManifest);
-        actionPanel.Controls.Add(_openReport);
-        actionPanel.Controls.Add(_status);
-
-        root.Controls.Add(fields, 0, 0);
-        root.Controls.Add(_log, 0, 1);
-        root.Controls.Add(actionPanel, 0, 2);
+        root.Controls.Add(actionPanel, 0, 0);
+        root.Controls.Add(fields, 0, 1);
+        root.Controls.Add(_log, 0, 2);
         page.Controls.Add(root);
         return page;
     }
@@ -341,9 +341,9 @@ public sealed class DashboardForm : Form
             .ToArray();
         if (linuxHosts.Length > 0) _linuxHosts.Text = string.Join(Environment.NewLine, linuxHosts);
 
-        tabs.SelectedIndex = 1;
+        tabs.SelectedIndex = 0;
         MessageBox.Show(this,
-            "Candidate hosts were copied to the Discover tab. Review every target, enter explicit SMB shares/credentials or SSH roots/host-key policy, then start file discovery.",
+            "Candidate hosts were copied to the File scan tab. Review every target, enter explicit SMB shares/credentials or SSH roots/host-key policy, then start file discovery.",
             "Review targets",
             MessageBoxButtons.OK,
             MessageBoxIcon.Information);
