@@ -1,5 +1,5 @@
 $ErrorActionPreference = 'Stop'
-Write-Host 'Restoring SmartBackupDiscovery 3.4...'
+Write-Host 'Restoring SmartBackupDiscovery 3.5...'
 dotnet restore .\SmartBackupDiscovery.csproj
 Write-Host 'Building Windows customer edition...'
 dotnet build .\SmartBackupDiscovery.csproj -c Release -f net10.0-windows --no-restore

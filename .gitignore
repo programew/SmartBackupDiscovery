@@ -8,5 +8,7 @@ discovery-manifest.json
 *.scan-progress.jsonl
 network-inventory.json
 network-inventory.csv
+settings.json
+*.settings.json
 network-targets/
 .sbd-network-history/

@@ -291,7 +291,7 @@ public sealed record BackupReadinessAssessment(
 public sealed class DiscoveryManifest
 {
     public string FormatVersion { get; init; } = "3.4";
-    public string ApplicationVersion { get; init; } = "3.4.0";
+    public string ApplicationVersion { get; init; } = "3.5.0";
     public string RuleSetVersion { get; init; } = "discover-only-3.4-network-inventory-linux-sftp-jvm-fastpath";
     public DateTime GeneratedAtUtc { get; init; } = DateTime.UtcNow;
     public HostIdentity ScannerHost { get; init; } = SourceIdentityProvider.GetScannerHostIdentity();

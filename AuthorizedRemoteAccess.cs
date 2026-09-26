@@ -143,7 +143,7 @@ public sealed class AuthorizedRemoteAccess : IDisposable
     public static string ReadPasswordInteractively(string prompt = "Password")
     {
         if (Console.IsInputRedirected)
-            throw new InvalidOperationException("Interactive password entry is unavailable when stdin is redirected. Use the corresponding --*-password-stdin option.");
+            throw new InvalidOperationException("Interactive password entry is unavailable when stdin is redirected. Use a direct password argument or the corresponding stdin option.");
 
         Console.Write(prompt + ": ");
         var chars = new List<char>();

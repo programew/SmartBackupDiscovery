@@ -92,6 +92,62 @@ public static class SelfTest
                 }
             });
 
+            Test("shared settings roundtrip and explicit scope authorization", () =>
+            {
+                string file = Path.Combine(root, "settings", "settings.json");
+                var saved = new ScanConfiguration
+                {
+                    Discover = new DiscoverConfiguration
+                    {
+                        LocalRoots = new() { @"C:\portable-test\root" },
+                        WindowsHosts = new() { "PC01" },
+                        WindowsShares = new() { "Data" },
+                        WindowsUsername = "DOMAIN\\user",
+                        LinuxHosts = new() { "linux01" },
+                        LinuxRoots = new() { "/srv" },
+                        LinuxUsername = "backup-reader",
+                        Manifest = "inventory/manifest.json",
+                        MaxCpuPercent = 60
+                    },
+                    Network = new NetworkConfiguration
+                    {
+                        Cidrs = new() { "192.168.10.0/24" }, Authorized = true,
+                        MaxHosts = 100, Output = @"C:\portable-test\hosts.json"
+                    }
+                };
+                saved.Passwords = PortableSecretProtector.Protect(new CredentialPayload
+                {
+                    WindowsPassword = "fixture-secret",
+                    LinuxPassword = "fixture-linux-secret"
+                }, "portable-test-passphrase");
+                ScanConfiguration.Save(file, saved);
+                var discover = ScanConfiguration.ExpandArguments(new[] { "discover", "--config", file, "--max-cpu-percent", "55" });
+                var network = ScanConfiguration.ExpandArguments(new[] { "network-discover", "--config", file });
+                bool overrideLast = discover.Arguments.TakeLast(2).SequenceEqual(new[] { "--max-cpu-percent", "55" });
+                string content = File.ReadAllText(file);
+                CredentialPayload opened = PortableSecretProtector.Unprotect(ScanConfiguration.Load(file).Passwords, "portable-test-passphrase");
+                bool protectedSecret = !content.Contains("fixture-secret", StringComparison.Ordinal) &&
+                    !content.Contains("fixture-linux-secret", StringComparison.Ordinal) &&
+                    opened.WindowsPassword == "fixture-secret" && opened.LinuxPassword == "fixture-linux-secret";
+                bool wrongPassphraseRejected = false;
+                try { PortableSecretProtector.Unprotect(saved.Passwords, "a-different-passphrase"); }
+                catch (InvalidOperationException) { wrongPassphraseRejected = true; }
+                bool tamperingRejected = false;
+                ProtectedPasswords changed = ScanConfiguration.Load(file).Passwords;
+                changed.Tag = Convert.ToBase64String(new byte[16]);
+                try { PortableSecretProtector.Unprotect(changed, "portable-test-passphrase"); }
+                catch (InvalidOperationException) { tamperingRejected = true; }
+                bool rejected = false;
+                try { ScanConfiguration.ExpandArguments(new[] { "network-discover", "--config", file, "--cidr", "192.168.20.0/24" }); }
+                catch (ArgumentException) { rejected = true; }
+                return discover.Configuration?.Discover.WindowsHosts.SequenceEqual(new[] { "PC01" }) == true &&
+                       discover.Arguments.Contains("--host") == OperatingSystem.IsWindows() &&
+                       discover.Arguments.Contains("--root") == OperatingSystem.IsWindows() &&
+                       discover.Arguments.Contains("--linux-host") && overrideLast && protectedSecret && wrongPassphraseRejected && tamperingRejected &&
+                       network.Arguments.Contains("--authorized-scope") &&
+                       network.Arguments.Contains("--output") == OperatingSystem.IsWindows() && rejected;
+            });
+
             Test("IPv4 CIDR parser canonicalizes scope and host count", () =>
             {
                 Ipv4Cidr cidr = Ipv4Cidr.Parse("192.168.25.77/24");

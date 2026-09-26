@@ -1,4 +1,4 @@
-# SmartBackupDiscovery 3.4 Security Guidance
+# SmartBackupDiscovery 3.5 Security Guidance
 
 ## Security boundary
 
@@ -24,7 +24,9 @@ Remote Windows access is limited to explicitly supplied SMB hosts/shares. Remote
 
 `root` credentials are technically accepted when intentionally authorized by the system owner. For routine customer deployments, prefer a dedicated read-only account scoped to the required roots. Do not grant sudo solely for SmartBackupDiscovery.
 
-Passwords are read from a hidden prompt or stdin and are not intentionally written to manifests, history, reports or command-line arguments. Managed strings can remain transiently in process memory until garbage collected; use SSH keys or an external protected secret workflow where that threat matters.
+Passwords can be read from a hidden prompt, stdin, direct command-line arguments, or saved encrypted settings. They are not intentionally written to manifests, history, or reports. `--password`, `--linux-password`, and `--config-passphrase` place secrets in process arguments and potentially shell history; use the corresponding `-stdin` options or a hidden prompt where that exposure matters. Managed strings can remain transiently in process memory until garbage collected; use SSH keys or an external protected secret workflow where that threat matters.
+
+The GUI saves a shared settings file only after the user chooses a path or starts a scan. Password storage is opt-in and uses a passphrase-derived AES-256-GCM key (PBKDF2-HMAC-SHA256, 600,000 iterations, random salt and nonce). The JSON contains encrypted credentials, salt, nonce, and authentication tag; the passphrase is never stored. The same file and passphrase can be used across supported operating systems. Possession of both enables decryption, so store them separately. Settings still disclose target hosts, paths, and usernames; keep them out of source repositories and protect their directory. Direct password arguments and password-stdin options override saved credentials. A file in the older Windows-only settings format must be recreated with this portable format.
 
 Private-key paths may be supplied on the command line; private-key contents are not copied into output artifacts.
 

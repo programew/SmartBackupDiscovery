@@ -22,14 +22,17 @@ public static class Program
             return 0;
         }
 
-        string command = args[0].ToLowerInvariant();
         try
         {
+            var expanded = ScanConfiguration.ExpandArguments(args);
+            args = expanded.Arguments;
+            ScanConfiguration? configuration = expanded.Configuration;
+            string command = args[0].ToLowerInvariant();
             return command switch
             {
                 "gui" => RunGui(),
                 "network-discover" or "network-inventory" => NetworkCli.Run(args),
-                "discover" or "scan" => RunDiscover(args),
+                "discover" or "scan" => RunDiscover(args, configuration),
                 "report" => RunReport(args),
                 "compare" => RunCompare(args),
                 "selftest" => SelfTest.Run(),
@@ -61,7 +64,7 @@ public static class Program
         return 2;
     }
 
-    private static int RunDiscover(string[] args)
+    private static int RunDiscover(string[] args, ScanConfiguration? configuration)
     {
         var directHosts = GetOptions(args, "--host");
         string? hostsFile = GetOption(args, "--hosts-file");
@@ -90,7 +93,41 @@ public static class Program
         bool linuxRemoteRequested = linuxTargets.Count > 0;
         bool anyRemoteRequested = remoteModeRequested || linuxRemoteModeRequested;
 
+        string? smbPasswordArgument = GetSensitiveOption(args, "--password");
+        string? linuxPasswordArgument = GetSensitiveOption(args, "--linux-password");
+        bool smbPasswordStdin = args.Contains("--password-stdin", StringComparer.OrdinalIgnoreCase);
+        bool linuxPasswordStdin = args.Contains("--linux-password-stdin", StringComparer.OrdinalIgnoreCase);
+        bool configPassphraseStdin = args.Contains("--config-passphrase-stdin", StringComparer.OrdinalIgnoreCase);
+        string? configPassphraseArgument = GetSensitiveOption(args, "--config-passphrase");
+        if ((smbPasswordArgument is not null && smbPasswordStdin) ||
+            (linuxPasswordArgument is not null && linuxPasswordStdin) ||
+            (configPassphraseArgument is not null && configPassphraseStdin))
+            throw new ArgumentException("Choose either the direct password argument or its stdin option, not both.");
+        if ((configPassphraseArgument is not null || configPassphraseStdin) && configuration is null)
+            throw new ArgumentException("--config-passphrase requires --config.");
+
+        string? sshKeyArgument = GetOption(args, "--ssh-key");
+        if (sshKeyArgument is not null && (linuxPasswordArgument is not null || linuxPasswordStdin))
+            throw new ArgumentException("--linux-password and --linux-password-stdin cannot be combined with --ssh-key.");
+
+        CredentialPayload? savedCredentials = null;
+        bool needsSavedPassword = (remoteRequested && smbPasswordArgument is null && !smbPasswordStdin) ||
+            (linuxRemoteRequested && sshKeyArgument is null && linuxPasswordArgument is null && !linuxPasswordStdin);
+        if (needsSavedPassword && configuration?.Passwords.HasSecrets == true)
+        {
+            string passphrase = configPassphraseArgument ?? (configPassphraseStdin
+                ? AuthorizedRemoteAccess.ReadPasswordFromStdin()
+                : AuthorizedRemoteAccess.ReadPasswordInteractively("Configuration passphrase"));
+            savedCredentials = PortableSecretProtector.Unprotect(configuration.Passwords, passphrase);
+            passphrase = string.Empty;
+        }
+
         var roots = GetOptions(args, "--root");
+        if (roots.Count == 0 && !anyRemoteRequested && configuration is not null &&
+            (configuration.Discover.LocalRoots?.Count > 0 || configuration.Discover.WindowsHosts?.Count > 0 ||
+             !string.IsNullOrWhiteSpace(configuration.Discover.WindowsHostsFile) ||
+             !string.IsNullOrWhiteSpace(configuration.Discover.LinuxHostsFile)))
+            throw new ArgumentException("No compatible targets remain from the settings file on this system. Supply a local --root or an authorized --linux-host with --linux-root.");
         if (roots.Count == 0 && !anyRemoteRequested)
             roots = PlatformScanPolicy.GetDefaultRoots();
         if (roots.Count == 0 && !anyRemoteRequested)
@@ -144,10 +181,9 @@ public static class Program
             if (string.IsNullOrWhiteSpace(username))
                 throw new ArgumentException("--username is required when --host or --hosts-file is used.");
 
-            bool passwordFromStdin = args.Contains("--password-stdin", StringComparer.OrdinalIgnoreCase);
-            string password = passwordFromStdin
+            string password = smbPasswordArgument ?? (smbPasswordStdin
                 ? AuthorizedRemoteAccess.ReadPasswordFromStdin()
-                : AuthorizedRemoteAccess.ReadPasswordInteractively();
+                : savedCredentials?.WindowsPassword ?? AuthorizedRemoteAccess.ReadPasswordInteractively());
 
             Console.WriteLine($"Authorized Remote Discover: {remoteTargets.Count} explicit host(s); no network discovery or CIDR probing.");
             Console.WriteLine($"Remote shares: {string.Join(", ", remoteTargets.SelectMany(x => x.Shares).Distinct(StringComparer.OrdinalIgnoreCase))}");
@@ -166,12 +202,9 @@ public static class Program
             if (string.IsNullOrWhiteSpace(linuxUsername))
                 throw new ArgumentException("--linux-username is required when --linux-host or --linux-hosts-file is used. The value may be root when that account is intentionally authorized for SSH/SFTP.");
 
-            string? sshKey = GetOption(args, "--ssh-key");
-            bool linuxPasswordStdin = args.Contains("--linux-password-stdin", StringComparer.OrdinalIgnoreCase);
+            string? sshKey = sshKeyArgument;
             bool keyPassphraseStdin = args.Contains("--ssh-key-passphrase-stdin", StringComparer.OrdinalIgnoreCase);
             bool keyPassphrasePrompt = args.Contains("--ssh-key-passphrase-prompt", StringComparer.OrdinalIgnoreCase);
-            if (!string.IsNullOrWhiteSpace(sshKey) && linuxPasswordStdin)
-                throw new ArgumentException("--linux-password-stdin cannot be combined with --ssh-key.");
             if (keyPassphraseStdin && keyPassphrasePrompt)
                 throw new ArgumentException("Choose only one of --ssh-key-passphrase-stdin or --ssh-key-passphrase-prompt.");
 
@@ -179,9 +212,9 @@ public static class Program
             string? keyPassphrase = null;
             if (string.IsNullOrWhiteSpace(sshKey))
             {
-                linuxPassword = linuxPasswordStdin
+                linuxPassword = linuxPasswordArgument ?? (linuxPasswordStdin
                     ? AuthorizedRemoteAccess.ReadPasswordFromStdin()
-                    : AuthorizedRemoteAccess.ReadPasswordInteractively("Linux SSH password");
+                    : savedCredentials?.LinuxPassword ?? AuthorizedRemoteAccess.ReadPasswordInteractively("Linux SSH password"));
             }
             else if (keyPassphraseStdin)
             {
@@ -205,7 +238,7 @@ public static class Program
                 Console.WriteLine($"Checkpoint: {checkpoint.CheckpointPath}");
             }
 
-            Console.WriteLine("SmartBackupDiscovery 3.4 (.NET 10) - Automatic Network Inventory + Windows/Linux DiscoverOnly + Authorized Linux SFTP");
+            Console.WriteLine("SmartBackupDiscovery 3.5 (.NET 10) - Automatic Network Inventory + Windows/Linux DiscoverOnly + Authorized Linux SFTP");
             Console.WriteLine($"Roots: {(roots.Count == 0 ? "(none reachable)" : string.Join(" | ", roots))}");
             Console.WriteLine($"Office protection inspection: {inspectOffice}, profile: {profile}");
             Console.WriteLine($"Resource policy: CPU <= {maxCpu:0.#}% | network <= {globalNetwork:0.#} Mbps global / {perHostNetwork:0.#} Mbps per UNC host");
@@ -399,9 +432,22 @@ public static class Program
 
     private static string? GetOption(string[] args, string name)
     {
-        for (int i = 0; i < args.Length - 1; i++)
+        for (int i = args.Length - 2; i >= 0; i--)
             if (args[i].Equals(name, StringComparison.OrdinalIgnoreCase)) return args[i + 1];
         return null;
+    }
+
+    private static string? GetSensitiveOption(string[] args, string name)
+    {
+        string? result = null;
+        for (int i = 1; i < args.Length; i++)
+        {
+            if (!args[i].Equals(name, StringComparison.OrdinalIgnoreCase)) continue;
+            if (i + 1 >= args.Length || args[i + 1].StartsWith("--", StringComparison.Ordinal))
+                throw new ArgumentException($"{name} requires a value.");
+            result = args[++i];
+        }
+        return result;
     }
 
     private static string RequireOption(string[] args, string name) =>
@@ -445,7 +491,7 @@ public static class Program
     private static void PrintHelp()
     {
         Console.WriteLine("""
-SmartBackupDiscovery 3.4 (.NET 10 / Windows + Linux) - DiscoverOnly product edition
+SmartBackupDiscovery 3.5 (.NET 10 / Windows + Linux) - DiscoverOnly product edition
 
 Commands:
   gui                        Open the Windows dashboard (Windows build only).
@@ -457,6 +503,18 @@ Commands:
   compare --current <path> --previous <path>
                              Compare two manifests.
   selftest                   Run deterministic product/classifier/platform tests.
+
+Shared GUI/CLI settings:
+  --config <path>            Load GUI-saved JSON for discover or network-discover.
+                             CLI scalar options override saved values; host/root/CIDR lists are additive.
+                             Saved passwords use a portable passphrase-encrypted envelope.
+  --config-passphrase <text> Unlock saved passwords (visible in process arguments/history).
+  --config-passphrase-stdin
+                             Read config passphrase as the first required stdin line.
+  --password <text>         SMB password (visible in process arguments/history).
+  --linux-password <text>   SSH/SFTP password (visible in process arguments/history).
+                             Direct password arguments take priority over stdin and saved values.
+                             --password-stdin / --linux-password-stdin override saved values.
 
 Controlled automatic network inventory:
   --cidr <private-cidr>      Explicit private IPv4 scope; repeat for multiple scopes.

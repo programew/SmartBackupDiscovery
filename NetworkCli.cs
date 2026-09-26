@@ -57,7 +57,7 @@ public static class NetworkCli
         string historyDirectory = Path.GetFullPath(GetOption(args, "--network-history-dir") ?? NetworkInventoryHistoryService.GetDefaultHistoryDirectory(output));
         int historyRetain = GetInt(args, "--network-history-retain", 30, 0, 10_000);
 
-        Console.WriteLine("SmartBackupDiscovery 3.4 - controlled automatic network inventory");
+        Console.WriteLine("SmartBackupDiscovery 3.5 - controlled automatic network inventory");
         Console.WriteLine("Boundary: private IPv4 inventory only; no authentication, share enumeration, file access, or automatic file scan.");
         foreach (NetworkDiscoveryScope scope in scopes)
             Console.WriteLine($"Scope: {scope.Cidr} [{scope.Source}] addresses={scope.CandidateAddresses:N0}{(scope.InterfaceName is null ? string.Empty : $" interface={scope.InterfaceName}")}");
@@ -157,7 +157,7 @@ public static class NetworkCli
 
     private static string? GetOption(string[] args, string name)
     {
-        for (int i = 0; i < args.Length - 1; i++)
+        for (int i = args.Length - 2; i >= 0; i--)
             if (args[i].Equals(name, StringComparison.OrdinalIgnoreCase)) return args[i + 1];
         return null;
     }

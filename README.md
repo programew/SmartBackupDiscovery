@@ -1,4 +1,4 @@
-# SmartBackupDiscovery 3.4 — .NET 10 Customer Edition
+# SmartBackupDiscovery 3.5 — .NET 10 Customer Edition
 
 SmartBackupDiscovery is a **discover-only backup-readiness and important-data inventory scanner** for Windows and Linux.
 
@@ -13,6 +13,31 @@ It is designed to answer questions such as:
 - Can the scan run without saturating CPU, disk or network resources?
 
 SmartBackupDiscovery **does not perform the backup itself**. It discovers, classifies, measures and reports.
+
+---
+
+## New in 3.5: Shared GUI and CLI settings
+
+The Windows GUI opens on **Discover files** and keeps **Start file discovery** visible above the scrollable settings. Enter one authorized Windows host per line or choose a hosts file. Linux hosts and local roots also accept multiple lines; Linux hosts files remain available for per-host roots and SSH fingerprints. The **Use reviewed targets** action fills the editable Windows and Linux host lists.
+
+The GUI saves both discovery and network-inventory settings to `%APPDATA%\SmartBackupDiscovery\settings.json` when either scan starts. **Save settings** and **Load settings** work with the path shown in the Discover files tab. The config can be reused from a command prompt:
+
+```powershell
+SmartBackupDiscovery.exe discover --config "$env:APPDATA\SmartBackupDiscovery\settings.json"
+SmartBackupDiscovery.exe network-discover --config "$env:APPDATA\SmartBackupDiscovery\settings.json"
+```
+
+`--config` is explicit: running the CLI without it does not silently use saved hosts or credentials. Single-value CLI options override saved settings; repeatable hosts, roots, shares, and CIDRs are additive. If you add a CIDR on the command line to saved authorized scopes, explicitly add `--authorized-scope` again. Relative file paths in the JSON resolve against the settings file's directory.
+
+Passwords are omitted by default. To store SMB/SSH passwords in the JSON, select **Save passwords encrypted with a portable passphrase** and enter a configuration passphrase of at least 12 characters. The JSON contains an AES-256-GCM encrypted credential envelope with a PBKDF2-HMAC-SHA256 key derivation salt and 600,000 iterations; the passphrase is never saved. On another computer or Linux CLI, use the same file and supply the passphrase to unlock the saved credentials:
+
+```powershell
+SmartBackupDiscovery.exe discover --config .\settings.json --config-passphrase 'your-long-passphrase'
+```
+
+You can supply passwords directly instead of saving them in the config: `--password <smb-password>` and `--linux-password <ssh-password>`. Direct passwords take priority over saved credentials. `--config-passphrase-stdin`, `--password-stdin`, and `--linux-password-stdin` are available when you do not want passwords visible in process arguments or shell history; when multiple stdin options are used, supply their lines in that order (only the lines actually requested). The GUI transfers scan passwords to its child CLI over stdin. Direct argument values can be visible to other local processes and in shell history, so handle them accordingly.
+
+When moving a Windows GUI settings file to Linux, Windows SMB targets and Windows-only paths are skipped with a warning. Linux SFTP targets and portable relative paths remain usable; specify Linux local paths or output locations with CLI overrides as needed. An empty compatible target list is an error rather than an implicit local scan. Keep the JSON file and passphrase separately; the JSON still discloses hosts, paths, usernames, and network scopes.
 
 ---
 

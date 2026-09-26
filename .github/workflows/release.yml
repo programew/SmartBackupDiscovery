@@ -29,6 +29,22 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build and self-test cross-platform CLI
+        run: |
+          dotnet restore SmartBackupDiscovery.csproj -p:TargetFramework=net10.0
+          dotnet build SmartBackupDiscovery.csproj -c Release -f net10.0 --no-restore
+          dotnet run --project SmartBackupDiscovery.csproj -c Release -f net10.0 --no-build -- selftest
+
+      - name: Compile Windows GUI target
+        run: |
+          dotnet restore SmartBackupDiscovery.csproj -p:TargetFramework=net10.0-windows
+          dotnet build SmartBackupDiscovery.csproj -c Release -f net10.0-windows --no-restore
+
       - name: Create release from changelog
         env:
           GH_TOKEN: ${{ github.token }}

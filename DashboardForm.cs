@@ -8,11 +8,13 @@ namespace SmartBackupDiscovery;
 public sealed class DashboardForm : Form
 {
     private readonly TextBox _roots = new() { Multiline = true, ScrollBars = ScrollBars.Vertical, Height = 72 };
+    private readonly TextBox _windowsHosts = new() { Multiline = true, ScrollBars = ScrollBars.Vertical, Height = 58, PlaceholderText = "One authorized Windows host per line" };
     private readonly TextBox _hostsFile = new();
     private readonly TextBox _shares = new() { Text = "C$" };
     private readonly TextBox _username = new();
     private readonly TextBox _password = new() { UseSystemPasswordChar = true };
     private readonly TextBox _linuxHosts = new() { Multiline = true, ScrollBars = ScrollBars.Vertical, Height = 58, PlaceholderText = "linux01\n192.168.1.40" };
+    private readonly TextBox _linuxHostsFile = new();
     private readonly TextBox _linuxRoots = new() { Multiline = true, ScrollBars = ScrollBars.Vertical, Height = 72, Text = "/home\r\n/srv\r\n/opt\r\n/var/www\r\n/var/lib\r\n/etc" };
     private readonly TextBox _linuxUsername = new() { PlaceholderText = "root or backup-discovery" };
     private readonly TextBox _linuxPassword = new() { UseSystemPasswordChar = true };
@@ -24,7 +26,13 @@ public sealed class DashboardForm : Form
     private readonly NumericUpDown _cpu = new() { Minimum = 1, Maximum = 100, Value = 75, Width = 90 };
     private readonly NumericUpDown _network = new() { Minimum = 0, Maximum = 100000, Value = 80, Width = 90 };
     private readonly CheckBox _privacy = new() { Text = "Privacy mode in management reports", Checked = false, AutoSize = true };
-    private readonly Button _start = new() { Text = "Start file scan", AutoSize = true };
+    private readonly CheckBox _savePasswords = new() { Text = "Save passwords encrypted with a portable passphrase", AutoSize = true };
+    private readonly TextBox _configPassphrase = new() { UseSystemPasswordChar = true, PlaceholderText = "At least 12 characters; keep it separately from settings.json" };
+    private readonly TextBox _configPath = new() { Text = ScanConfiguration.DefaultPath };
+    private readonly Button _saveSettings = new() { Text = "Save settings", AutoSize = true };
+    private readonly Button _loadSettings = new() { Text = "Load settings", AutoSize = true };
+    private readonly Label _settingsStatus = new() { Text = "Settings are saved when a scan starts", AutoSize = true, Padding = new Padding(5, 7, 0, 0) };
+    private readonly Button _start = new() { Text = "Start file discovery", AutoSize = true };
     private readonly Button _openManifest = new() { Text = "Open manifest...", AutoSize = true };
     private readonly Button _openReport = new() { Text = "Open HTML report", AutoSize = true, Enabled = false };
     private readonly TextBox _log = new() { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Both, WordWrap = false, Dock = DockStyle.Fill };
@@ -71,10 +79,11 @@ public sealed class DashboardForm : Form
 
     private string? _lastHtmlReport;
     private string? _lastNetworkInventory;
+    private ProtectedPasswords _storedPasswords = new();
 
     public DashboardForm()
     {
-        Text = "SmartBackupDiscovery 3.4";
+        Text = "SmartBackupDiscovery 3.5";
         Width = 1180;
         Height = 820;
         MinimumSize = new System.Drawing.Size(960, 680);
@@ -95,10 +104,11 @@ public sealed class DashboardForm : Form
         _networkGrid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "MAC", DataPropertyName = "MacAddress", FillWeight = 25 });
 
         var tabs = new TabControl { Dock = DockStyle.Fill };
-        tabs.TabPages.Add(BuildScanTab());
         tabs.TabPages.Add(BuildNetworkTab());
+        tabs.TabPages.Add(BuildScanTab());
         tabs.TabPages.Add(BuildDashboardTab());
         Controls.Add(tabs);
+        tabs.SelectedIndex = 1;
 
         _start.Click += async (_, _) => await StartScanAsync(tabs);
         _openManifest.Click += (_, _) => OpenManifestDialog();
@@ -106,6 +116,10 @@ public sealed class DashboardForm : Form
         _networkStart.Click += async (_, _) => await StartNetworkDiscoveryAsync();
         _networkOpen.Click += (_, _) => OpenNetworkInventory();
         _networkUseTargets.Click += (_, _) => UseReviewedNetworkTargets(tabs);
+        _saveSettings.Click += (_, _) => SaveSettings(showError: true);
+        _loadSettings.Click += (_, _) => LoadSettings(showError: true);
+
+        if (File.Exists(_configPath.Text)) LoadSettings(showError: true);
     }
 
     private TabPage BuildNetworkTab()
@@ -164,17 +178,10 @@ public sealed class DashboardForm : Form
 
     private TabPage BuildScanTab()
     {
-        var page = new TabPage("File scan") { AutoScroll = true };
-        var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, Padding = new Padding(14) };
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-
-        var actionPanel = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight, Padding = new Padding(0, 0, 0, 8) };
-        actionPanel.Controls.Add(_start);
-        actionPanel.Controls.Add(_openManifest);
-        actionPanel.Controls.Add(_openReport);
-        actionPanel.Controls.Add(_status);
+        var page = new TabPage("Discover files");
+        var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Padding = new Padding(14) };
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 62));
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 38));
 
         var fields = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 3 };
         fields.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 190));
@@ -182,11 +189,13 @@ public sealed class DashboardForm : Form
         fields.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 
         AddRow(fields, "Local roots (one per line)", _roots, MakeBrowseFolderButton(_roots));
+        AddRow(fields, "Windows hosts (one per line)", _windowsHosts, new Label { Text = "explicit hosts only", AutoSize = true, Padding = new Padding(6) });
         AddRow(fields, "Authorized hosts file", _hostsFile, MakeBrowseFileButton(_hostsFile, "Host lists|*.txt;*.csv|All files|*.*"));
         AddRow(fields, "Explicit remote shares", _shares, new Label { Text = "e.g. C$;D$;Data", AutoSize = true, Padding = new Padding(6) });
         AddRow(fields, "Remote username", _username, new Label { Text = "DOMAIN\\user", AutoSize = true, Padding = new Padding(6) });
         AddRow(fields, "Remote password", _password, new Label { Text = "never placed on command line", AutoSize = true, Padding = new Padding(6) });
         AddRow(fields, "Linux SSH hosts", _linuxHosts, new Label { Text = "explicit hosts only", AutoSize = true, Padding = new Padding(6) });
+        AddRow(fields, "Linux hosts file", _linuxHostsFile, MakeBrowseFileButton(_linuxHostsFile, "Host lists|*.txt;*.csv|All files|*.*"));
         AddRow(fields, "Linux roots", _linuxRoots, new Label { Text = "absolute paths", AutoSize = true, Padding = new Padding(6) });
         AddRow(fields, "Linux SSH username", _linuxUsername, new Label { Text = "root is allowed when authorized", AutoSize = true, Padding = new Padding(6) });
         AddRow(fields, "Linux SSH password", _linuxPassword, new Label { Text = "sent via stdin, not argv", AutoSize = true, Padding = new Padding(6) });
@@ -206,11 +215,26 @@ public sealed class DashboardForm : Form
         resourcePanel.Controls.Add(_network);
         resourcePanel.Controls.Add(_privacy);
         AddRow(fields, "Resource/report policy", resourcePanel, new Label());
+        AddRow(fields, "Shared GUI/CLI settings", _configPath, MakeSaveFileButton(_configPath));
+        AddRow(fields, "Password storage", _savePasswords, new Label { Text = "unchecked: never written to settings", AutoSize = true, Padding = new Padding(6) });
+        AddRow(fields, "Config passphrase", _configPassphrase, new Label { Text = "needed to unlock saved passwords; never stored", AutoSize = true, Padding = new Padding(6) });
 
-        root.Controls.Add(actionPanel, 0, 0);
-        root.Controls.Add(fields, 0, 1);
-        root.Controls.Add(_log, 0, 2);
+        var actionPanel = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, FlowDirection = FlowDirection.LeftToRight, Padding = new Padding(14, 8, 0, 8) };
+        actionPanel.Controls.Add(_start);
+        actionPanel.Controls.Add(_saveSettings);
+        actionPanel.Controls.Add(_loadSettings);
+        actionPanel.Controls.Add(_openManifest);
+        actionPanel.Controls.Add(_openReport);
+        actionPanel.Controls.Add(_status);
+        actionPanel.Controls.Add(_settingsStatus);
+
+        var scroll = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
+        fields.Dock = DockStyle.Top;
+        scroll.Controls.Add(fields);
+        root.Controls.Add(scroll, 0, 0);
+        root.Controls.Add(_log, 0, 1);
         page.Controls.Add(root);
+        page.Controls.Add(actionPanel);
         return page;
     }
 
@@ -248,6 +272,7 @@ public sealed class DashboardForm : Form
             MessageBox.Show(this, "Confirm that you are authorized to inventory the explicit CIDR scope(s).", "SmartBackupDiscovery", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
+        if (!SaveSettings(showError: true)) return;
 
         string output = Path.GetFullPath(Environment.ExpandEnvironmentVariables(_networkOutput.Text.Trim()));
         string parent = Path.GetDirectoryName(output) ?? Environment.CurrentDirectory;
@@ -329,10 +354,12 @@ public sealed class DashboardForm : Form
     {
         if (_lastNetworkInventory is null || !File.Exists(_lastNetworkInventory)) return;
         NetworkInventoryManifest inventory = NetworkInventoryStore.Read(_lastNetworkInventory);
-        string parent = Path.GetDirectoryName(_lastNetworkInventory) ?? Environment.CurrentDirectory;
-        string windowsList = Path.Combine(parent, "network-targets", "windows-smb-hosts.generated.txt");
-        if (File.Exists(windowsList) && inventory.Hosts.Any(x => x.PlatformHint is "WindowsOrSmb" or "MixedServices"))
-            _hostsFile.Text = windowsList;
+        string[] windowsHosts = inventory.Hosts
+            .Where(x => x.PlatformHint is "WindowsOrSmb" or "MixedServices")
+            .Select(x => x.IpAddress)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (windowsHosts.Length > 0) _windowsHosts.Text = string.Join(Environment.NewLine, windowsHosts);
 
         string[] linuxHosts = inventory.Hosts
             .Where(x => x.PlatformHint is "LinuxOrSsh" or "MixedServices")
@@ -341,9 +368,9 @@ public sealed class DashboardForm : Form
             .ToArray();
         if (linuxHosts.Length > 0) _linuxHosts.Text = string.Join(Environment.NewLine, linuxHosts);
 
-        tabs.SelectedIndex = 0;
+        tabs.SelectedIndex = 1;
         MessageBox.Show(this,
-            "Candidate hosts were copied to the File scan tab. Review every target, enter explicit SMB shares/credentials or SSH roots/host-key policy, then start file discovery.",
+            "Candidate hosts were copied to the Discover tab. Review every target, enter explicit SMB shares/credentials or SSH roots/host-key policy, then start file discovery.",
             "Review targets",
             MessageBoxButtons.OK,
             MessageBoxIcon.Information);
@@ -353,22 +380,25 @@ public sealed class DashboardForm : Form
     {
         if (_start.Enabled == false) return;
         List<string> roots = SplitLines(_roots.Text);
+        List<string> windowsHosts = SplitLines(_windowsHosts.Text);
         string? hostsFile = NullIfWhiteSpace(_hostsFile.Text);
         List<string> linuxHosts = SplitLines(_linuxHosts.Text);
-        bool linuxRemote = linuxHosts.Count > 0;
-        if (roots.Count == 0 && hostsFile is null && !linuxRemote)
+        string? linuxHostsFile = NullIfWhiteSpace(_linuxHostsFile.Text);
+        bool linuxRemote = linuxHosts.Count > 0 || linuxHostsFile is not null;
+        bool windowsRemote = windowsHosts.Count > 0 || hostsFile is not null;
+        if (roots.Count == 0 && !windowsRemote && !linuxRemote)
         {
-            MessageBox.Show(this, "Add at least one local root, Windows hosts file, or explicit Linux SSH host.", "SmartBackupDiscovery", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show(this, "Add a local root, authorized Windows host/list, or explicit Linux SSH host.", "SmartBackupDiscovery", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
-        if (hostsFile is not null && string.IsNullOrWhiteSpace(_username.Text))
+        if (windowsRemote && string.IsNullOrWhiteSpace(_username.Text))
         {
             MessageBox.Show(this, "Remote discovery requires a username.", "SmartBackupDiscovery", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
-        if (hostsFile is not null && SplitShares(_shares.Text).Count == 0)
+        if (windowsRemote && SplitShares(_shares.Text).Count == 0 && windowsHosts.Count > 0)
         {
             MessageBox.Show(this, "Remote shares must be explicit in v3. Enter a share such as C$ or Data, or specify shares per host in the hosts file.", "SmartBackupDiscovery", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
@@ -384,6 +414,8 @@ public sealed class DashboardForm : Form
             MessageBox.Show(this, "Add at least one absolute Linux root such as /home or /srv.", "SmartBackupDiscovery", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
+        if (!UnlockPasswordsForScan(windowsRemote, linuxRemote)) return;
+        if (!SaveSettings(showError: true)) return;
 
         string manifest = Path.GetFullPath(Environment.ExpandEnvironmentVariables(_manifest.Text.Trim()));
         string manifestParent = Path.GetDirectoryName(manifest) ?? Environment.CurrentDirectory;
@@ -407,10 +439,11 @@ public sealed class DashboardForm : Form
             string? inventory = NullIfWhiteSpace(_inventory.Text);
             if (inventory is not null) { psi.ArgumentList.Add("--backup-inventory"); psi.ArgumentList.Add(inventory); }
 
-            bool remote = hostsFile is not null;
+            bool remote = windowsRemote;
             if (remote)
             {
-                psi.ArgumentList.Add("--hosts-file"); psi.ArgumentList.Add(hostsFile!);
+                foreach (string host in windowsHosts) { psi.ArgumentList.Add("--host"); psi.ArgumentList.Add(host); }
+                if (hostsFile is not null) { psi.ArgumentList.Add("--hosts-file"); psi.ArgumentList.Add(hostsFile); }
                 foreach (string share in SplitShares(_shares.Text)) { psi.ArgumentList.Add("--remote-share"); psi.ArgumentList.Add(share); }
                 psi.ArgumentList.Add("--username"); psi.ArgumentList.Add(_username.Text.Trim());
                 psi.ArgumentList.Add("--password-stdin");
@@ -419,6 +452,7 @@ public sealed class DashboardForm : Form
             if (linuxRemote)
             {
                 foreach (string host in linuxHosts) { psi.ArgumentList.Add("--linux-host"); psi.ArgumentList.Add(host); }
+                if (linuxHostsFile is not null) { psi.ArgumentList.Add("--linux-hosts-file"); psi.ArgumentList.Add(linuxHostsFile); }
                 foreach (string linuxRoot in SplitLines(_linuxRoots.Text)) { psi.ArgumentList.Add("--linux-root"); psi.ArgumentList.Add(linuxRoot); }
                 psi.ArgumentList.Add("--linux-username"); psi.ArgumentList.Add(_linuxUsername.Text.Trim());
                 psi.ArgumentList.Add("--linux-password-stdin");
@@ -438,14 +472,14 @@ public sealed class DashboardForm : Form
             if (remote)
             {
                 string password = _password.Text;
-                _password.Clear();
+                if (!_savePasswords.Checked) _password.Clear();
                 await process.StandardInput.WriteLineAsync(password);
                 password = string.Empty;
             }
             if (linuxRemote)
             {
                 string linuxPassword = _linuxPassword.Text;
-                _linuxPassword.Clear();
+                if (!_savePasswords.Checked) _linuxPassword.Clear();
                 await process.StandardInput.WriteLineAsync(linuxPassword);
                 linuxPassword = string.Empty;
             }
@@ -523,6 +557,169 @@ public sealed class DashboardForm : Form
     {
         if (_lastHtmlReport is null || !File.Exists(_lastHtmlReport)) return;
         Process.Start(new ProcessStartInfo(_lastHtmlReport) { UseShellExecute = true });
+    }
+
+    private bool SaveSettings(bool showError)
+    {
+        try
+        {
+            string path = Path.GetFullPath(Environment.ExpandEnvironmentVariables(_configPath.Text.Trim()));
+            static string? AbsolutePath(string? value) => value is null
+                ? null : Path.GetFullPath(Environment.ExpandEnvironmentVariables(value));
+            ProtectedPasswords encrypted = new();
+            if (_savePasswords.Checked)
+            {
+                if (string.IsNullOrEmpty(_configPassphrase.Text))
+                {
+                    if (_password.TextLength > 0 || _linuxPassword.TextLength > 0)
+                        throw new InvalidOperationException("Enter the configuration passphrase to save entered passwords, or uncheck password storage to use them only for this scan.");
+                    encrypted = _storedPasswords; // Saving non-secret settings must not erase locked credentials.
+                }
+                else
+                {
+                    CredentialPayload previous = _storedPasswords.HasSecrets
+                        ? PortableSecretProtector.Unprotect(_storedPasswords, _configPassphrase.Text)
+                        : new CredentialPayload();
+                    var credentials = new CredentialPayload
+                    {
+                        WindowsPassword = _password.TextLength > 0 ? _password.Text : previous.WindowsPassword,
+                        LinuxPassword = _linuxPassword.TextLength > 0 ? _linuxPassword.Text : previous.LinuxPassword
+                    };
+                    if (!string.IsNullOrEmpty(credentials.WindowsPassword) || !string.IsNullOrEmpty(credentials.LinuxPassword))
+                        encrypted = PortableSecretProtector.Protect(credentials, _configPassphrase.Text);
+                }
+            }
+            var config = new ScanConfiguration
+            {
+                Discover = new DiscoverConfiguration
+                {
+                    LocalRoots = SplitLines(_roots.Text).Select(root => AbsolutePath(root)!).ToList(),
+                    WindowsHosts = SplitLines(_windowsHosts.Text),
+                    WindowsHostsFile = AbsolutePath(NullIfWhiteSpace(_hostsFile.Text)),
+                    WindowsShares = SplitShares(_shares.Text),
+                    WindowsUsername = NullIfWhiteSpace(_username.Text),
+                    LinuxHosts = SplitLines(_linuxHosts.Text),
+                    LinuxHostsFile = AbsolutePath(NullIfWhiteSpace(_linuxHostsFile.Text)),
+                    LinuxRoots = SplitLines(_linuxRoots.Text),
+                    LinuxUsername = NullIfWhiteSpace(_linuxUsername.Text),
+                    SshPort = (int)_sshPort.Value,
+                    SshFingerprint = NullIfWhiteSpace(_sshFingerprint.Text),
+                    SshTrustOnFirstUse = _sshTofu.Checked,
+                    BackupInventory = AbsolutePath(NullIfWhiteSpace(_inventory.Text)),
+                    Manifest = AbsolutePath(NullIfWhiteSpace(_manifest.Text)),
+                    MaxCpuPercent = (int)_cpu.Value,
+                    NetworkMbps = (int)_network.Value,
+                    PrivacyMode = _privacy.Checked
+                },
+                Network = new NetworkConfiguration
+                {
+                    Cidrs = SplitLines(_networkCidrs.Text),
+                    Exclusions = SplitLines(_networkExclusions.Text),
+                    Authorized = _networkAuthorized.Checked,
+                    Output = AbsolutePath(NullIfWhiteSpace(_networkOutput.Text)),
+                    MaxHosts = (int)_networkMaxHosts.Value,
+                    Concurrency = (int)_networkConcurrency.Value,
+                    Rate = (int)_networkRate.Value,
+                    TimeoutMilliseconds = (int)_networkTimeout.Value,
+                    MaxCpuPercent = (int)_cpu.Value,
+                    NetworkMbps = (int)_network.Value
+                },
+                Passwords = encrypted
+            };
+            ScanConfiguration.Save(path, config);
+            _storedPasswords = encrypted;
+            _configPath.Text = path;
+            _settingsStatus.Text = encrypted.HasSecrets && _configPassphrase.TextLength == 0
+                ? "Settings saved; passwords remain locked" : "Settings saved";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _settingsStatus.Text = "Could not save settings";
+            if (showError) MessageBox.Show(this, ex.Message, "Save settings", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return false;
+        }
+    }
+
+    private void LoadSettings(bool showError)
+    {
+        try
+        {
+            string path = Path.GetFullPath(Environment.ExpandEnvironmentVariables(_configPath.Text.Trim()));
+            ScanConfiguration config = ScanConfiguration.Load(path);
+            string baseDirectory = Path.GetDirectoryName(path)!;
+            string? ConfigPath(string? value) => value is null
+                ? null : Path.GetFullPath(Environment.ExpandEnvironmentVariables(value), baseDirectory);
+            CredentialPayload? credentials = config.Passwords.HasSecrets && _configPassphrase.TextLength > 0
+                ? PortableSecretProtector.Unprotect(config.Passwords, _configPassphrase.Text) : null;
+            DiscoverConfiguration d = config.Discover;
+            NetworkConfiguration n = config.Network;
+            _roots.Text = string.Join(Environment.NewLine, (d.LocalRoots ?? new()).Select(root => ConfigPath(root)));
+            _windowsHosts.Text = string.Join(Environment.NewLine, d.WindowsHosts ?? new());
+            _hostsFile.Text = ConfigPath(d.WindowsHostsFile) ?? string.Empty;
+            _shares.Text = string.Join(";", d.WindowsShares ?? new());
+            _username.Text = d.WindowsUsername ?? string.Empty;
+            _linuxHosts.Text = string.Join(Environment.NewLine, d.LinuxHosts ?? new());
+            _linuxHostsFile.Text = ConfigPath(d.LinuxHostsFile) ?? string.Empty;
+            _linuxRoots.Text = string.Join(Environment.NewLine, d.LinuxRoots ?? new());
+            _linuxUsername.Text = d.LinuxUsername ?? string.Empty;
+            _sshPort.Value = Math.Clamp(d.SshPort, (int)_sshPort.Minimum, (int)_sshPort.Maximum);
+            _sshFingerprint.Text = d.SshFingerprint ?? string.Empty;
+            _sshTofu.Checked = d.SshTrustOnFirstUse;
+            _inventory.Text = ConfigPath(d.BackupInventory) ?? string.Empty;
+            _manifest.Text = ConfigPath(d.Manifest) ?? string.Empty;
+            _cpu.Value = Math.Clamp(d.MaxCpuPercent, (int)_cpu.Minimum, (int)_cpu.Maximum);
+            _network.Value = Math.Clamp(d.NetworkMbps, (int)_network.Minimum, (int)_network.Maximum);
+            _privacy.Checked = d.PrivacyMode;
+
+            _networkCidrs.Text = string.Join(Environment.NewLine, n.Cidrs ?? new());
+            _networkExclusions.Text = string.Join(Environment.NewLine, n.Exclusions ?? new());
+            _networkAuthorized.Checked = n.Authorized;
+            _networkOutput.Text = ConfigPath(n.Output) ?? string.Empty;
+            _networkMaxHosts.Value = Math.Clamp(n.MaxHosts, (int)_networkMaxHosts.Minimum, (int)_networkMaxHosts.Maximum);
+            _networkConcurrency.Value = Math.Clamp(n.Concurrency, (int)_networkConcurrency.Minimum, (int)_networkConcurrency.Maximum);
+            _networkRate.Value = Math.Clamp(n.Rate, (int)_networkRate.Minimum, (int)_networkRate.Maximum);
+            _networkTimeout.Value = Math.Clamp(n.TimeoutMilliseconds, (int)_networkTimeout.Minimum, (int)_networkTimeout.Maximum);
+
+            _password.Clear();
+            _linuxPassword.Clear();
+            _savePasswords.Checked = config.Passwords.HasSecrets;
+            _storedPasswords = config.Passwords;
+            _password.Text = credentials?.WindowsPassword ?? string.Empty;
+            _linuxPassword.Text = credentials?.LinuxPassword ?? string.Empty;
+            _configPath.Text = path;
+            _settingsStatus.Text = config.Passwords.HasSecrets && credentials is null
+                ? "Settings loaded; enter passphrase and Load settings to unlock passwords" : "Settings loaded";
+        }
+        catch (Exception ex)
+        {
+            _settingsStatus.Text = "Could not load settings";
+            if (showError) MessageBox.Show(this, ex.Message, "Load settings", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    private bool UnlockPasswordsForScan(bool windowsRemote, bool linuxRemote)
+    {
+        try
+        {
+            if (_storedPasswords.HasSecrets &&
+                (windowsRemote && _password.TextLength == 0 || linuxRemote && _linuxPassword.TextLength == 0))
+            {
+                if (_configPassphrase.TextLength == 0)
+                    throw new InvalidOperationException("Enter the configuration passphrase and load settings to unlock saved passwords.");
+                CredentialPayload credentials = PortableSecretProtector.Unprotect(_storedPasswords, _configPassphrase.Text);
+                if (_password.TextLength == 0) _password.Text = credentials.WindowsPassword ?? string.Empty;
+                if (_linuxPassword.TextLength == 0) _linuxPassword.Text = credentials.LinuxPassword ?? string.Empty;
+            }
+            if (windowsRemote && _password.TextLength == 0 || linuxRemote && _linuxPassword.TextLength == 0)
+                throw new InvalidOperationException("Enter a password for each selected remote connection.");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "Unlock passwords", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return false;
+        }
     }
 
     private static ProcessStartInfo BuildSelfStartInfo()

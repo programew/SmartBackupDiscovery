@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.5.0
+
+- Moved the file-discovery start button into a persistent toolbar and opened the Discover files tab by default.
+- Added an editable Windows-host list to the GUI alongside the existing hosts-file option; reviewed network candidates populate that list.
+- Added shared JSON settings for GUI and `discover --config` / `network-discover --config`, including target lists, outputs, resource limits, and network scope settings.
+- GUI saves settings before starting either discovery workflow and can explicitly save/reload a chosen settings file.
+- Optional password persistence uses passphrase-derived authenticated encryption portable between operating systems; the passphrase is not stored in JSON. Added direct `--password`, `--linux-password`, `--config-passphrase` arguments and corresponding stdin alternatives. Direct credentials take priority over saved passwords; command-line secrets can be exposed in process lists/history.
+- Linux CLI skips Windows SMB targets and Windows-only paths from a copied GUI settings file; when no compatible configured targets remain, it reports an error instead of scanning implicit local defaults.
+
 ## 3.4.0
 
 - Added controlled `network-discover` / `network-inventory` private-IPv4 host inventory.
