@@ -2,7 +2,7 @@ namespace SmartBackupDiscovery;
 
 public static class NetworkCli
 {
-    public static int Run(string[] args)
+    public static int Run(string[] args, Func<NetworkInventoryManifest, int>? afterSuccess = null, int? sshProbePort = null)
     {
         var explicitCidrs = GetOptions(args, "--cidr");
         var rawExclusions = GetOptions(args, "--exclude-cidr");
@@ -27,7 +27,7 @@ public static class NetworkCli
             ? Array.Empty<int>()
             : requestedPorts.Count > 0
                 ? requestedPorts.Distinct().OrderBy(x => x).ToArray()
-                : defaults.TcpPorts;
+                : sshProbePort.HasValue ? new[] { sshProbePort.Value, 445 }.Distinct().Order().ToArray() : defaults.TcpPorts;
 
         int timeout = GetInt(args, "--probe-timeout-ms", defaults.ProbeTimeoutMilliseconds, 100, 30_000);
         int concurrency = GetInt(args, "--network-concurrency", defaults.MaxConcurrency, 1, 256);
@@ -57,8 +57,9 @@ public static class NetworkCli
         string historyDirectory = Path.GetFullPath(GetOption(args, "--network-history-dir") ?? NetworkInventoryHistoryService.GetDefaultHistoryDirectory(output));
         int historyRetain = GetInt(args, "--network-history-retain", 30, 0, 10_000);
 
-        Console.WriteLine("SmartBackupDiscovery 3.5 - controlled automatic network inventory");
-        Console.WriteLine("Boundary: private IPv4 inventory only; no authentication, share enumeration, file access, or automatic file scan.");
+        Console.WriteLine("SmartBackupDiscovery 3.6 - controlled automatic network inventory");
+        Console.WriteLine("Network stage: private IPv4 inventory; no authentication, share enumeration or file access.");
+        if (afterSuccess is not null) Console.WriteLine("Automatic file discovery is enabled and will start after successful inventory using configured connections.");
         foreach (NetworkDiscoveryScope scope in scopes)
             Console.WriteLine($"Scope: {scope.Cidr} [{scope.Source}] addresses={scope.CandidateAddresses:N0}{(scope.InterfaceName is null ? string.Empty : $" interface={scope.InterfaceName}")}");
         if (exclusions.Count > 0) Console.WriteLine("Excluded: " + string.Join(", ", exclusions.Select(x => x.Canonical)));
@@ -100,6 +101,7 @@ public static class NetworkCli
             inventory = new NetworkDiscoveryService()
                 .DiscoverAsync(scopes, exclusions, policy, warnings, ShowProgress, cancellation.Token, scopeSuggestions)
                 .GetAwaiter().GetResult();
+            cancellation.Token.ThrowIfCancellationRequested();
         }
         finally
         {
@@ -131,7 +133,8 @@ public static class NetworkCli
         }
 
         PrintSummary(inventory, artifacts);
-        return inventory.Errors.Count == 0 ? 0 : 1;
+        if (inventory.Errors.Count > 0) return 1;
+        return afterSuccess?.Invoke(inventory) ?? 0;
     }
 
     private static void PrintSummary(NetworkInventoryManifest inventory, NetworkInventoryArtifacts artifacts)
@@ -152,7 +155,7 @@ public static class NetworkCli
         if (artifacts.LinuxHostsPath is not null) Console.WriteLine("Reviewed Linux target list: " + artifacts.LinuxHostsPath);
         if (artifacts.ReviewHostsPath is not null) Console.WriteLine("Unclassified host list: " + artifacts.ReviewHostsPath);
         if (artifacts.SuggestedScopesPath is not null) Console.WriteLine("Suggested private scopes: " + artifacts.SuggestedScopesPath);
-        Console.WriteLine("Discovery results are suggestions only. Review target lists before credentialed SMB/SFTP discovery.");
+        Console.WriteLine("Generated lists are service candidates. Automatic mode uses only current in-scope service targets with a configured connection.");
     }
 
     private static string? GetOption(string[] args, string name)

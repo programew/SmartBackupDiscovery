@@ -51,6 +51,9 @@ public sealed class DashboardForm : Form
     private readonly NumericUpDown _networkConcurrency = new() { Minimum = 1, Maximum = 256, Value = 32, Width = 80 };
     private readonly NumericUpDown _networkRate = new() { Minimum = 1, Maximum = 10000, Value = 64, Width = 80 };
     private readonly NumericUpDown _networkTimeout = new() { Minimum = 100, Maximum = 30000, Value = 600, Increment = 100, Width = 90 };
+    private readonly CheckBox _autoFileDiscovery = new() { Text = "Start file discovery automatically after network discovery", AutoSize = true };
+    private readonly Button _networkStop = new() { Text = "Stop", AutoSize = true, Enabled = false };
+    private readonly Button _scanStop = new() { Text = "Stop", AutoSize = true, Enabled = false };
     private readonly Button _networkStart = new() { Text = "Discover network", AutoSize = true };
     private readonly Button _networkOpen = new() { Text = "Open inventory", AutoSize = true, Enabled = false };
     private readonly Button _networkUseTargets = new() { Text = "Use reviewed targets", AutoSize = true, Enabled = false };
@@ -77,13 +80,18 @@ public sealed class DashboardForm : Form
         AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill
     };
 
+    private TableLayoutPanel _scanFields = null!;
+    private TableLayoutPanel _networkFields = null!;
+    private bool _workflowRunning;
+    private bool _cancelRequested;
+    private Process? _activeProcess;
     private string? _lastHtmlReport;
     private string? _lastNetworkInventory;
     private ProtectedPasswords _storedPasswords = new();
 
     public DashboardForm()
     {
-        Text = "SmartBackupDiscovery 3.5";
+        Text = "SmartBackupDiscovery 3.6";
         Width = 1180;
         Height = 820;
         MinimumSize = new System.Drawing.Size(960, 680);
@@ -113,7 +121,9 @@ public sealed class DashboardForm : Form
         _start.Click += async (_, _) => await StartScanAsync(tabs);
         _openManifest.Click += (_, _) => OpenManifestDialog();
         _openReport.Click += (_, _) => OpenLastReport();
-        _networkStart.Click += async (_, _) => await StartNetworkDiscoveryAsync();
+        _networkStart.Click += async (_, _) => await StartNetworkDiscoveryAsync(tabs);
+        _networkStop.Click += (_, _) => StopWorkflow();
+        _scanStop.Click += (_, _) => StopWorkflow();
         _networkOpen.Click += (_, _) => OpenNetworkInventory();
         _networkUseTargets.Click += (_, _) => UseReviewedNetworkTargets(tabs);
         _saveSettings.Click += (_, _) => SaveSettings(showError: true);
@@ -131,7 +141,7 @@ public sealed class DashboardForm : Form
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 58));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
-        var fields = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 3 };
+        var fields = _networkFields = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 3 };
         fields.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 190));
         fields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         fields.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
@@ -150,10 +160,11 @@ public sealed class DashboardForm : Form
         limits.Controls.Add(new Label { Text = "Timeout ms", AutoSize = true, Padding = new Padding(12, 7, 3, 0) });
         limits.Controls.Add(_networkTimeout);
         AddRow(fields, "Probe limits", limits, new Label());
+        AddRow(fields, "After network discovery", _autoFileDiscovery, new Label());
 
         var notice = new Label
         {
-            Text = "This step only inventories private IPv4 hosts using bounded ICMP, DNS, neighbor-cache and TCP 22/445 signals. Route/neighbor evidence outside the active scope is reported as a passive suggestion and is not probed. No IP, mask, route or gateway is changed. Review generated targets before using credentials.",
+            Text = "Automatic file discovery uses the SMB/SSH settings in Discover files. Configure usernames, passwords, shares or Linux roots and SSH trust before starting. Only newly detected service hosts are scanned; saved local roots and host lists are not included. Unknown hosts and passive scope suggestions are skipped.",
             AutoSize = true,
             MaximumSize = new System.Drawing.Size(1050, 0),
             Padding = new Padding(0, 8, 0, 8)
@@ -164,6 +175,7 @@ public sealed class DashboardForm : Form
 
         var actions = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight };
         actions.Controls.Add(_networkStart);
+        actions.Controls.Add(_networkStop);
         actions.Controls.Add(_networkOpen);
         actions.Controls.Add(_networkUseTargets);
         actions.Controls.Add(_networkStatus);
@@ -183,7 +195,7 @@ public sealed class DashboardForm : Form
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 62));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 38));
 
-        var fields = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 3 };
+        var fields = _scanFields = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 3 };
         fields.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 190));
         fields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         fields.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
@@ -221,6 +233,7 @@ public sealed class DashboardForm : Form
 
         var actionPanel = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, FlowDirection = FlowDirection.LeftToRight, Padding = new Padding(14, 8, 0, 8) };
         actionPanel.Controls.Add(_start);
+        actionPanel.Controls.Add(_scanStop);
         actionPanel.Controls.Add(_saveSettings);
         actionPanel.Controls.Add(_loadSettings);
         actionPanel.Controls.Add(_openManifest);
@@ -263,29 +276,47 @@ public sealed class DashboardForm : Form
         return page;
     }
 
-    private async Task StartNetworkDiscoveryAsync()
+    private async Task StartNetworkDiscoveryAsync(TabControl tabs)
     {
-        if (!_networkStart.Enabled) return;
-        List<string> cidrs = SplitLines(_networkCidrs.Text);
-        if (cidrs.Count > 0 && !_networkAuthorized.Checked)
-        {
-            MessageBox.Show(this, "Confirm that you are authorized to inventory the explicit CIDR scope(s).", "SmartBackupDiscovery", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
-        }
-        if (!SaveSettings(showError: true)) return;
-
-        string output = Path.GetFullPath(Environment.ExpandEnvironmentVariables(_networkOutput.Text.Trim()));
-        string parent = Path.GetDirectoryName(output) ?? Environment.CurrentDirectory;
-        ManifestWriter.EnsureNoReparseAncestors(parent);
-        _networkLog.Clear();
-        _networkGrid.DataSource = null;
-        _networkStart.Enabled = false;
-        _networkOpen.Enabled = false;
-        _networkUseTargets.Enabled = false;
-        _networkStatus.Text = "Running...";
-
+        if (_workflowRunning) return;
+        bool automatic = _autoFileDiscovery.Checked;
         try
         {
+            List<string> cidrs = SplitLines(_networkCidrs.Text);
+            if (cidrs.Count > 0 && !_networkAuthorized.Checked)
+                throw new ArgumentException("Confirm that you are authorized to inventory the explicit CIDR scope(s).");
+            if (automatic)
+            {
+                bool smb = !string.IsNullOrWhiteSpace(_username.Text);
+                bool ssh = !string.IsNullOrWhiteSpace(_linuxUsername.Text);
+                if (!smb && !ssh) throw new ArgumentException("Configure an SMB or SSH username in Discover files before enabling automatic file discovery.");
+                if (smb && SplitShares(_shares.Text).Count == 0)
+                    throw new ArgumentException("Enter explicit Windows shares in Discover files.");
+                if (ssh && SplitLines(_linuxRoots.Text).Count == 0)
+                    throw new ArgumentException("Enter absolute Linux roots in Discover files.");
+                if (smb) AuthorizedRemoteAccess.LoadTargets(Array.Empty<string>(), null, SplitShares(_shares.Text));
+                if (ssh)
+                {
+                    foreach (string root in SplitLines(_linuxRoots.Text)) _ = RemoteLinuxPath.NormalizeAbsolute(root);
+                    _ = RemoteLinuxSftpDiscovery.NormalizeFingerprint(NullIfWhiteSpace(_sshFingerprint.Text));
+                }
+                if (!UnlockPasswordsForScan(smb, ssh)) return;
+            }
+            if (!SaveSettings(showError: true)) return;
+
+            string output = Path.GetFullPath(Environment.ExpandEnvironmentVariables(_networkOutput.Text.Trim()));
+            ManifestWriter.EnsureNoReparseAncestors(Path.GetDirectoryName(output)!);
+            if (automatic)
+                NetworkFileDiscovery.ValidateOutputPaths(output, Path.ChangeExtension(output, ".csv"),
+                    Environment.ExpandEnvironmentVariables(_manifest.Text.Trim()));
+            _networkLog.Clear();
+            _networkGrid.DataSource = null;
+            _lastNetworkInventory = null;
+            _networkOpen.Enabled = false;
+            _cancelRequested = false;
+            SetWorkflowBusy(true);
+            _networkStatus.Text = automatic ? "Step 1/2: discovering network..." : "Discovering network...";
+
             ProcessStartInfo psi = BuildSelfStartInfo();
             psi.ArgumentList.Add("network-discover");
             foreach (string cidr in cidrs) { psi.ArgumentList.Add("--cidr"); psi.ArgumentList.Add(cidr); }
@@ -298,35 +329,48 @@ public sealed class DashboardForm : Form
             psi.ArgumentList.Add("--probe-timeout-ms"); psi.ArgumentList.Add(_networkTimeout.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
             psi.ArgumentList.Add("--max-cpu-percent"); psi.ArgumentList.Add(_cpu.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
             psi.ArgumentList.Add("--network-limit-mbps"); psi.ArgumentList.Add(_network.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
-
-            using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
-            process.OutputDataReceived += (_, e) => AppendNetworkLog(e.Data);
-            process.ErrorDataReceived += (_, e) => AppendNetworkLog(e.Data);
-            process.Start();
-            process.StandardInput.Close();
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-            await process.WaitForExitAsync();
-
-            _networkStatus.Text = $"Finished (exit {process.ExitCode})";
-            if (File.Exists(output))
+            if (automatic)
             {
-                LoadNetworkInventory(output);
-                _lastNetworkInventory = output;
-                _networkOpen.Enabled = true;
-                _networkUseTargets.Enabled = true;
+                psi.ArgumentList.Add("--probe-port"); psi.ArgumentList.Add("445");
+                psi.ArgumentList.Add("--probe-port"); psi.ArgumentList.Add(_sshPort.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
+
+            int exitCode = await RunChildAsync(psi, AppendNetworkLog, Array.Empty<string>());
+            if (_cancelRequested) { _networkStatus.Text = "Cancelled; file discovery was not started"; return; }
+            if (exitCode != 0)
+            {
+                _networkStatus.Text = $"Network discovery failed (exit {exitCode}); file discovery was not started";
+                return;
+            }
+            if (!File.Exists(output)) throw new IOException("Network discovery produced no inventory.");
+            NetworkInventoryManifest inventory = NetworkInventoryStore.Read(output);
+            LoadNetworkInventory(output);
+            _lastNetworkInventory = output;
+            _networkOpen.Enabled = true;
+            if (automatic && NetworkFileDiscovery.CanStart(exitCode, _cancelRequested, inventory))
+            {
+                NetworkFileTargets targets = NetworkFileDiscovery.SelectTargets(inventory,
+                    !string.IsNullOrWhiteSpace(_username.Text), !string.IsNullOrWhiteSpace(_linuxUsername.Text), (int)_sshPort.Value);
+                AppendNetworkLog($"Automatic targets: {targets.WindowsHosts.Count} SMB, {targets.LinuxHosts.Count} SFTP; {targets.SkippedHosts} host(s) skipped.");
+                if (!targets.HasTargets)
+                {
+                    _networkStatus.Text = "No compatible service targets; file discovery was not started";
+                    return;
+                }
+                _networkStatus.Text = "Step 2/2: discovering files...";
+                tabs.SelectedIndex = 1;
+                await StartScanAsync(tabs, targets);
+                _networkStatus.Text = _cancelRequested ? "Cancelled" : "Network finished; file discovery: " + _status.Text;
             }
         }
         catch (Exception ex)
         {
-            _networkStatus.Text = "Failed";
+            _networkStatus.Text = _cancelRequested ? "Cancelled" : "Failed";
             AppendNetworkLog("GUI error: " + ex.Message);
-            MessageBox.Show(this, ex.Message, "Network inventory failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            if (!_cancelRequested && !IsDisposed)
+                MessageBox.Show(this, ex.Message, "Network inventory failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
-        finally
-        {
-            _networkStart.Enabled = true;
-        }
+        finally { if (!IsDisposed) SetWorkflowBusy(false); }
     }
 
     private void LoadNetworkInventory(string path)
@@ -353,20 +397,13 @@ public sealed class DashboardForm : Form
     private void UseReviewedNetworkTargets(TabControl tabs)
     {
         if (_lastNetworkInventory is null || !File.Exists(_lastNetworkInventory)) return;
+        if (_workflowRunning) return;
         NetworkInventoryManifest inventory = NetworkInventoryStore.Read(_lastNetworkInventory);
-        string[] windowsHosts = inventory.Hosts
-            .Where(x => x.PlatformHint is "WindowsOrSmb" or "MixedServices")
-            .Select(x => x.IpAddress)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-        if (windowsHosts.Length > 0) _windowsHosts.Text = string.Join(Environment.NewLine, windowsHosts);
-
-        string[] linuxHosts = inventory.Hosts
-            .Where(x => x.PlatformHint is "LinuxOrSsh" or "MixedServices")
-            .Select(x => x.IpAddress)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-        if (linuxHosts.Length > 0) _linuxHosts.Text = string.Join(Environment.NewLine, linuxHosts);
+        NetworkFileTargets targets = NetworkFileDiscovery.SelectTargets(inventory, true, true, (int)_sshPort.Value);
+        _windowsHosts.Text = string.Join(Environment.NewLine, targets.WindowsHosts);
+        _linuxHosts.Text = string.Join(Environment.NewLine, targets.LinuxHosts);
+        _hostsFile.Clear();
+        _linuxHostsFile.Clear();
 
         tabs.SelectedIndex = 1;
         MessageBox.Show(this,
@@ -376,58 +413,60 @@ public sealed class DashboardForm : Form
             MessageBoxIcon.Information);
     }
 
-    private async Task StartScanAsync(TabControl tabs)
+    private async Task StartScanAsync(TabControl tabs, NetworkFileTargets? automaticTargets = null)
     {
-        if (_start.Enabled == false) return;
-        List<string> roots = SplitLines(_roots.Text);
-        List<string> windowsHosts = SplitLines(_windowsHosts.Text);
-        string? hostsFile = NullIfWhiteSpace(_hostsFile.Text);
-        List<string> linuxHosts = SplitLines(_linuxHosts.Text);
-        string? linuxHostsFile = NullIfWhiteSpace(_linuxHostsFile.Text);
-        bool linuxRemote = linuxHosts.Count > 0 || linuxHostsFile is not null;
-        bool windowsRemote = windowsHosts.Count > 0 || hostsFile is not null;
-        if (roots.Count == 0 && !windowsRemote && !linuxRemote)
-        {
-            MessageBox.Show(this, "Add a local root, authorized Windows host/list, or explicit Linux SSH host.", "SmartBackupDiscovery", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
-        }
-
-        if (windowsRemote && string.IsNullOrWhiteSpace(_username.Text))
-        {
-            MessageBox.Show(this, "Remote discovery requires a username.", "SmartBackupDiscovery", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
-        }
-
-        if (windowsRemote && SplitShares(_shares.Text).Count == 0 && windowsHosts.Count > 0)
-        {
-            MessageBox.Show(this, "Remote shares must be explicit in v3. Enter a share such as C$ or Data, or specify shares per host in the hosts file.", "SmartBackupDiscovery", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
-        }
-
-        if (linuxRemote && string.IsNullOrWhiteSpace(_linuxUsername.Text))
-        {
-            MessageBox.Show(this, "Linux SFTP discovery requires an SSH username.", "SmartBackupDiscovery", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
-        }
-        if (linuxRemote && SplitLines(_linuxRoots.Text).Count == 0)
-        {
-            MessageBox.Show(this, "Add at least one absolute Linux root such as /home or /srv.", "SmartBackupDiscovery", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
-        }
-        if (!UnlockPasswordsForScan(windowsRemote, linuxRemote)) return;
-        if (!SaveSettings(showError: true)) return;
-
-        string manifest = Path.GetFullPath(Environment.ExpandEnvironmentVariables(_manifest.Text.Trim()));
-        string manifestParent = Path.GetDirectoryName(manifest) ?? Environment.CurrentDirectory;
-        ManifestWriter.EnsureNoReparseAncestors(manifestParent);
-        _log.Clear();
-        _lastHtmlReport = null;
-        _openReport.Enabled = false;
-        _start.Enabled = false;
-        _status.Text = "Running...";
-
+        if (_workflowRunning && automaticTargets is null || _cancelRequested && automaticTargets is not null) return;
+        bool ownsWorkflow = automaticTargets is null;
         try
         {
+            List<string> roots = automaticTargets is null ? SplitLines(_roots.Text) : new();
+            List<string> windowsHosts = automaticTargets?.WindowsHosts.ToList() ?? SplitLines(_windowsHosts.Text);
+            string? hostsFile = automaticTargets is null ? NullIfWhiteSpace(_hostsFile.Text) : null;
+            List<string> linuxHosts = automaticTargets?.LinuxHosts.ToList() ?? SplitLines(_linuxHosts.Text);
+            string? linuxHostsFile = automaticTargets is null ? NullIfWhiteSpace(_linuxHostsFile.Text) : null;
+            bool linuxRemote = linuxHosts.Count > 0 || linuxHostsFile is not null;
+            bool windowsRemote = windowsHosts.Count > 0 || hostsFile is not null;
+            if (roots.Count == 0 && !windowsRemote && !linuxRemote)
+            {
+                MessageBox.Show(this, "Add a local root, authorized Windows host/list, or explicit Linux SSH host.", "SmartBackupDiscovery", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            if (windowsRemote && string.IsNullOrWhiteSpace(_username.Text))
+            {
+                MessageBox.Show(this, "Remote discovery requires a username.", "SmartBackupDiscovery", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            if (windowsRemote && SplitShares(_shares.Text).Count == 0 && windowsHosts.Count > 0)
+            {
+                MessageBox.Show(this, "Remote shares must be explicit in v3. Enter a share such as C$ or Data, or specify shares per host in the hosts file.", "SmartBackupDiscovery", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            if (linuxRemote && string.IsNullOrWhiteSpace(_linuxUsername.Text))
+            {
+                MessageBox.Show(this, "Linux SFTP discovery requires an SSH username.", "SmartBackupDiscovery", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            if (linuxRemote && SplitLines(_linuxRoots.Text).Count == 0)
+            {
+                MessageBox.Show(this, "Add at least one absolute Linux root such as /home or /srv.", "SmartBackupDiscovery", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            if (!UnlockPasswordsForScan(windowsRemote, linuxRemote)) return;
+            if (ownsWorkflow && !SaveSettings(showError: true)) return;
+
+            string manifest = Path.GetFullPath(Environment.ExpandEnvironmentVariables(_manifest.Text.Trim()));
+            string manifestParent = Path.GetDirectoryName(manifest) ?? Environment.CurrentDirectory;
+            ManifestWriter.EnsureNoReparseAncestors(manifestParent);
+            _log.Clear();
+            _lastHtmlReport = null;
+            _openReport.Enabled = false;
+            if (ownsWorkflow) _cancelRequested = false;
+            SetWorkflowBusy(true);
+            _status.Text = automaticTargets is null ? "Discovering files..." : "Step 2/2: discovering files...";
+            DateTime startedUtc = DateTime.UtcNow;
             ProcessStartInfo psi = BuildSelfStartInfo();
             psi.ArgumentList.Add("discover");
             foreach (string scanRoot in roots) { psi.ArgumentList.Add("--root"); psi.ArgumentList.Add(scanRoot); }
@@ -462,52 +501,35 @@ public sealed class DashboardForm : Form
                 if (_sshTofu.Checked) psi.ArgumentList.Add("--ssh-trust-on-first-use");
             }
 
-            using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
-            process.OutputDataReceived += (_, e) => AppendLog(e.Data);
-            process.ErrorDataReceived += (_, e) => AppendLog(e.Data);
-            process.Start();
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-
-            if (remote)
+            var passwords = new List<string>();
+            if (remote) passwords.Add(_password.Text);
+            if (linuxRemote) passwords.Add(_linuxPassword.Text);
+            if (!_savePasswords.Checked)
             {
-                string password = _password.Text;
-                if (!_savePasswords.Checked) _password.Clear();
-                await process.StandardInput.WriteLineAsync(password);
-                password = string.Empty;
+                if (remote) _password.Clear();
+                if (linuxRemote) _linuxPassword.Clear();
             }
-            if (linuxRemote)
-            {
-                string linuxPassword = _linuxPassword.Text;
-                if (!_savePasswords.Checked) _linuxPassword.Clear();
-                await process.StandardInput.WriteLineAsync(linuxPassword);
-                linuxPassword = string.Empty;
-            }
-            if (remote || linuxRemote)
-            {
-                await process.StandardInput.FlushAsync();
-                process.StandardInput.Close();
-            }
-
-            await process.WaitForExitAsync();
-            _status.Text = $"Finished (exit {process.ExitCode})";
-            if (File.Exists(manifest))
+            int exitCode = await RunChildAsync(psi, AppendLog, passwords);
+            if (_cancelRequested) { _status.Text = "Cancelled"; return; }
+            _status.Text = $"Finished (exit {exitCode})";
+            if (File.Exists(manifest) && ManifestReader.Read(manifest).GeneratedAtUtc >= startedUtc)
             {
                 LoadManifest(manifest);
+                _status.Text = exitCode == 0 ? "File discovery complete" : $"File discovery finished with errors (exit {exitCode})";
                 string report = Path.Combine(Path.GetDirectoryName(manifest) ?? Environment.CurrentDirectory, "reports", Path.GetFileNameWithoutExtension(manifest) + "-management-report.html");
-                if (File.Exists(report)) { _lastHtmlReport = report; _openReport.Enabled = true; }
+                if (File.Exists(report) && File.GetLastWriteTimeUtc(report) >= startedUtc) { _lastHtmlReport = report; _openReport.Enabled = true; }
                 tabs.SelectedIndex = 2;
             }
         }
         catch (Exception ex)
         {
-            _status.Text = "Failed";
+            _status.Text = _cancelRequested ? "Cancelled" : "Failed";
             AppendLog("GUI error: " + ex.Message);
-            MessageBox.Show(this, ex.Message, "SmartBackupDiscovery", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            if (!_cancelRequested && !IsDisposed) MessageBox.Show(this, ex.Message, "SmartBackupDiscovery", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
         finally
         {
-            _start.Enabled = true;
+            if (ownsWorkflow && !IsDisposed) SetWorkflowBusy(false);
         }
     }
 
@@ -616,6 +638,7 @@ public sealed class DashboardForm : Form
                     Cidrs = SplitLines(_networkCidrs.Text),
                     Exclusions = SplitLines(_networkExclusions.Text),
                     Authorized = _networkAuthorized.Checked,
+                    AutoStartFileDiscovery = _autoFileDiscovery.Checked,
                     Output = AbsolutePath(NullIfWhiteSpace(_networkOutput.Text)),
                     MaxHosts = (int)_networkMaxHosts.Value,
                     Concurrency = (int)_networkConcurrency.Value,
@@ -675,6 +698,7 @@ public sealed class DashboardForm : Form
             _networkCidrs.Text = string.Join(Environment.NewLine, n.Cidrs ?? new());
             _networkExclusions.Text = string.Join(Environment.NewLine, n.Exclusions ?? new());
             _networkAuthorized.Checked = n.Authorized;
+            _autoFileDiscovery.Checked = n.AutoStartFileDiscovery;
             _networkOutput.Text = ConfigPath(n.Output) ?? string.Empty;
             _networkMaxHosts.Value = Math.Clamp(n.MaxHosts, (int)_networkMaxHosts.Minimum, (int)_networkMaxHosts.Maximum);
             _networkConcurrency.Value = Math.Clamp(n.Concurrency, (int)_networkConcurrency.Minimum, (int)_networkConcurrency.Maximum);
@@ -722,6 +746,73 @@ public sealed class DashboardForm : Form
         }
     }
 
+    private void SetWorkflowBusy(bool busy)
+    {
+        _workflowRunning = busy;
+        _scanFields.Enabled = !busy;
+        _networkFields.Enabled = !busy;
+        _start.Enabled = !busy;
+        _networkStart.Enabled = !busy;
+        _saveSettings.Enabled = !busy;
+        _loadSettings.Enabled = !busy;
+        _openManifest.Enabled = !busy;
+        _networkUseTargets.Enabled = !busy && _lastNetworkInventory is not null;
+        _networkStop.Enabled = busy && !_cancelRequested;
+        _scanStop.Enabled = busy && !_cancelRequested;
+    }
+
+    private void StopWorkflow()
+    {
+        if (!_workflowRunning) return;
+        _cancelRequested = true;
+        _scanStop.Enabled = false;
+        _networkStop.Enabled = false;
+        _status.Text = "Stopping...";
+        _networkStatus.Text = "Stopping...";
+        try
+        {
+            if (_activeProcess is { HasExited: false }) _activeProcess.Kill(entireProcessTree: true);
+        }
+        catch (InvalidOperationException) { } // Process exited between checking and stopping.
+        catch (System.ComponentModel.Win32Exception ex) { AppendLog("Could not stop child process: " + ex.Message); }
+    }
+
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        base.OnFormClosing(e);
+        if (!e.Cancel) StopWorkflow();
+    }
+
+    private async Task<int> RunChildAsync(ProcessStartInfo psi, Action<string?> log, IReadOnlyList<string> passwords)
+    {
+        using var process = new Process { StartInfo = psi };
+        process.OutputDataReceived += (_, e) => log(e.Data);
+        process.ErrorDataReceived += (_, e) => log(e.Data);
+        bool started = false;
+        try
+        {
+            process.Start();
+            started = true;
+            _activeProcess = process;
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+            foreach (string password in passwords) await process.StandardInput.WriteLineAsync(password);
+            process.StandardInput.Close();
+            await process.WaitForExitAsync();
+            return process.ExitCode;
+        }
+        finally
+        {
+            if (started && !process.HasExited)
+            {
+                try { process.Kill(entireProcessTree: true); }
+                catch (InvalidOperationException) { }
+                await process.WaitForExitAsync();
+            }
+            _activeProcess = null;
+        }
+    }
+
     private static ProcessStartInfo BuildSelfStartInfo()
     {
         string executable = Environment.ProcessPath ?? throw new InvalidOperationException("Cannot determine executable path.");
@@ -742,16 +833,24 @@ public sealed class DashboardForm : Form
 
     private void AppendLog(string? line)
     {
-        if (line is null) return;
-        if (InvokeRequired) { BeginInvoke(new Action(() => AppendLog(line))); return; }
+        if (line is null || IsDisposed || Disposing || !IsHandleCreated) return;
+        if (InvokeRequired)
+        {
+            try { BeginInvoke(new Action(() => AppendLog(line))); } catch (InvalidOperationException) { }
+            return;
+        }
         if (_log.TextLength > 2_000_000) _log.Clear();
         _log.AppendText(line + Environment.NewLine);
     }
 
     private void AppendNetworkLog(string? line)
     {
-        if (line is null) return;
-        if (InvokeRequired) { BeginInvoke(new Action(() => AppendNetworkLog(line))); return; }
+        if (line is null || IsDisposed || Disposing || !IsHandleCreated) return;
+        if (InvokeRequired)
+        {
+            try { BeginInvoke(new Action(() => AppendNetworkLog(line))); } catch (InvalidOperationException) { }
+            return;
+        }
         if (_networkLog.TextLength > 2_000_000) _networkLog.Clear();
         _networkLog.AppendText(line + Environment.NewLine);
     }

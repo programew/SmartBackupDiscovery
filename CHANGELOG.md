@@ -1,5 +1,20 @@
 # Changelog
 
+## 3.6.0
+
+Released 2026-09-27.
+
+- Added **Start file discovery automatically after network discovery** to the Windows GUI. The opt-in setting is saved in the portable shared configuration; existing configurations keep it off.
+- Added `network-discover --auto-discover` and `--no-auto-discover`; the CLI also honors `network.autoStartFileDiscovery` in `--config`. Connection, credential, resource and report options are reused for the follow-up scan.
+- Automatic file discovery uses only this run's in-scope, non-excluded IP addresses with an open configured service port. Hosts are deduplicated; unknown/cached-only hosts and unconfigured transports are skipped. Both SMB and SFTP can run for a mixed-service host.
+- Preserved target separation: saved local roots, previous host lists and hosts files do not enter automatic scans. Empty results never trigger a local-drive scan. Manual discovery remains available.
+- Added a shared GUI busy state and Stop buttons. Concurrent network/file runs are blocked; stopping or failing inventory prevents the next stage. Closing the GUI stops its active child process.
+- Do not load old outputs after a failed network run. File results/reports are shown only when produced by the current run, including fresh partial file results with errors.
+- Validate connection settings and reject overlapping network/file output paths before starting an automatic workflow. The configured SSH port is probed in automatic mode when no CLI probe-port override is supplied.
+- The manual **Use reviewed targets** action now clears obsolete host entries and hosts-file selections.
+- Build scripts now stop on PowerShell native-command failures; Linux publish restores its runtime-specific assets.
+- Added six deterministic regression tests for persisted flags, target isolation, exclusions/deduplication/custom SSH ports, failure/empty/cancel gates, single handoff and returned exit codes, and invalid configuration/output collisions.
+
 ## 3.5.0
 
 - Moved the file-discovery start button into a persistent toolbar and opened the Discover files tab by default.

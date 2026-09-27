@@ -24,6 +24,7 @@ public static class Program
 
         try
         {
+            string[] requestedArguments = args;
             var expanded = ScanConfiguration.ExpandArguments(args);
             args = expanded.Arguments;
             ScanConfiguration? configuration = expanded.Configuration;
@@ -31,7 +32,7 @@ public static class Program
             return command switch
             {
                 "gui" => RunGui(),
-                "network-discover" or "network-inventory" => NetworkCli.Run(args),
+                "network-discover" or "network-inventory" => RunNetwork(args, requestedArguments, configuration),
                 "discover" or "scan" => RunDiscover(args, configuration),
                 "report" => RunReport(args),
                 "compare" => RunCompare(args),
@@ -62,6 +63,19 @@ public static class Program
         Console.Error.WriteLine($"Unknown command: {command}");
         PrintHelp();
         return 2;
+    }
+
+    private static int RunNetwork(string[] args, string[] requestedArguments, ScanConfiguration? configuration)
+    {
+        if (!NetworkFileDiscovery.IsEnabled(args)) return NetworkCli.Run(args);
+        string[] fileArgs = NetworkFileDiscovery.BuildFileArguments(requestedArguments, configuration);
+        NetworkFileDiscovery.ValidateSettings(fileArgs, OperatingSystem.IsWindows());
+        string output = NetworkFileDiscovery.Value(args, "--output") ?? Path.Combine(Environment.CurrentDirectory, "network-inventory.json");
+        NetworkFileDiscovery.ValidateOutputPaths(output,
+            NetworkFileDiscovery.Value(args, "--csv") ?? Path.ChangeExtension(output, ".csv"),
+            NetworkFileDiscovery.Value(fileArgs, "--manifest") ?? Path.Combine(Environment.CurrentDirectory, "discovery-manifest.json"));
+        return NetworkCli.Run(args, inventory => NetworkFileDiscovery.RunAfterInventory(
+            inventory, fileArgs, configuration, OperatingSystem.IsWindows(), RunDiscover), NetworkFileDiscovery.SshPort(fileArgs));
     }
 
     private static int RunDiscover(string[] args, ScanConfiguration? configuration)
@@ -238,7 +252,7 @@ public static class Program
                 Console.WriteLine($"Checkpoint: {checkpoint.CheckpointPath}");
             }
 
-            Console.WriteLine("SmartBackupDiscovery 3.5 (.NET 10) - Automatic Network Inventory + Windows/Linux DiscoverOnly + Authorized Linux SFTP");
+            Console.WriteLine("SmartBackupDiscovery 3.6 (.NET 10) - Automatic Network Inventory + Windows/Linux DiscoverOnly + Authorized Linux SFTP");
             Console.WriteLine($"Roots: {(roots.Count == 0 ? "(none reachable)" : string.Join(" | ", roots))}");
             Console.WriteLine($"Office protection inspection: {inspectOffice}, profile: {profile}");
             Console.WriteLine($"Resource policy: CPU <= {maxCpu:0.#}% | network <= {globalNetwork:0.#} Mbps global / {perHostNetwork:0.#} Mbps per UNC host");
@@ -491,7 +505,7 @@ public static class Program
     private static void PrintHelp()
     {
         Console.WriteLine("""
-SmartBackupDiscovery 3.5 (.NET 10 / Windows + Linux) - DiscoverOnly product edition
+SmartBackupDiscovery 3.6 (.NET 10 / Windows + Linux) - DiscoverOnly product edition
 
 Commands:
   gui                        Open the Windows dashboard (Windows build only).
@@ -517,6 +531,9 @@ Shared GUI/CLI settings:
                              --password-stdin / --linux-password-stdin override saved values.
 
 Controlled automatic network inventory:
+  --auto-discover            After successful inventory, scan newly detected service hosts.
+                             Uses configured SMB/SSH connections; ignores saved targets/local roots.
+  --no-auto-discover         Override the saved setting for an inventory-only run.
   --cidr <private-cidr>      Explicit private IPv4 scope; repeat for multiple scopes.
                              Without --cidr, connected RFC1918 scopes are detected automatically.
   --authorized-scope         Required with any explicit --cidr.
@@ -627,7 +644,9 @@ Examples:
   SmartBackupDiscovery.exe discover --hosts-file .\\machines.txt --remote-share Data --username "CONTOSO\\backupscan"
 
 Discover-only security boundaries:
-  - network-discover is a separate inventory step. It never authenticates, enumerates shares, or starts a file scan.
+  - The network inventory stage does not authenticate or inspect files.
+  - With --auto-discover (or the saved option), successful inventory starts a separate file-discovery stage.
+  - Automatic mode requires configured connections and never falls back to local drives on empty results.
   - Automatic scope is limited to connected RFC1918 IPv4 networks. Explicit CIDRs require --authorized-scope and must remain private.
   - Inventory probes are bounded by host, concurrency, rate, timeout, CPU and network limits.
   - Remote Windows file targets and shares remain explicit after inventory review; there is no automatic share enumeration.

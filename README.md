@@ -1,4 +1,4 @@
-# SmartBackupDiscovery 3.5 — .NET 10 Customer Edition
+# SmartBackupDiscovery 3.6 — .NET 10 Customer Edition
 
 SmartBackupDiscovery is a **discover-only backup-readiness and important-data inventory scanner** for Windows and Linux.
 
@@ -15,6 +15,40 @@ It is designed to answer questions such as:
 SmartBackupDiscovery **does not perform the backup itself**. It discovers, classifies, measures and reports.
 
 ---
+
+## New in 3.6: Optional automatic file discovery
+
+In **Discover files**, configure the Windows SMB username/password and explicit shares, and/or the Linux SSH username/password, roots, port and host-key policy. Then open **Network inventory**, select **Start file discovery automatically after network discovery**, and click **Discover network**. The checkbox is off by default and is saved with the other settings.
+
+On success, the GUI moves to file discovery and then the dashboard. It scans only the freshly discovered hosts with an open port 445 (SMB) or the configured SSH port (default 22) and a configured username for that transport. The saved local roots, manual host lists and hosts files are ignored for this automatic run. Hosts with both services can use both configured connections. Duplicates, excluded/out-of-scope hosts, cached-only hosts and hosts without a compatible service are skipped.
+
+The same workflow works from the CLI:
+
+```powershell
+# Explicitly enable the follow-up scan using saved connection settings.
+SmartBackupDiscovery.exe network-discover --config .\settings.json --auto-discover --config-passphrase 'your-long-passphrase'
+
+# Honor the checkbox stored in settings (supply credentials/passphrase as needed).
+SmartBackupDiscovery.exe network-discover --config .\settings.json
+
+# Override a saved enabled checkbox for this run only.
+SmartBackupDiscovery.exe network-discover --config .\settings.json --no-auto-discover
+```
+
+Without a config, pass connection settings directly, for example:
+
+```bash
+dotnet SmartBackupDiscovery.dll network-discover --auto-discover \
+  --linux-username backup-reader --linux-root /srv --linux-password-stdin
+```
+
+SSH still requires a previously known key, a supplied `--ssh-host-key-sha256`, or explicitly selected `--ssh-trust-on-first-use`. Automatic mode never enables TOFU by itself. On Linux, SMB transport is skipped. With no `--probe-port` override, automatic mode probes port 445 and the configured SSH port. A custom probe list must contain the required service ports for hosts to be selected.
+
+CLI file-discovery settings (shares, Linux roots, credentials, limits, manifest, history and reports) can accompany `--auto-discover`. Explicit `--root`, `--host`, `--linux-host` and hosts-file options are rejected in automatic mode; use `discover` for those manual targets. Saved targets are ignored without modifying the config. Credential stdin lines remain in the documented order below, only for the transports actually selected; use direct password arguments or encrypted settings when a fixed multi-transport stdin sequence is unsuitable.
+
+Failed or cancelled inventory does not start a file scan. If no compatible targets are found, the program reports that and stops; it never falls back to scanning local drives. Exit status reflects the follow-up file scan when it runs. In the GUI, **Stop** terminates the active child process and cancels the remaining stage; an incomplete file scan may leave its existing checkpoint. Settings and start buttons stay disabled while a workflow is active. Manual **Start file discovery** remains available after it ends.
+
+The source package also includes framework-dependent builds under `binaries/windows-x64` and `binaries/linux-x64`. Windows requires the .NET 10 Desktop Runtime; Linux requires the .NET 10 runtime. Extract the entire folder so its dependency DLLs remain beside the executable. The source builds remain in `SmartBackupDiscovery/`.
 
 ## New in 3.5: Shared GUI and CLI settings
 

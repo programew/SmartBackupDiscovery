@@ -148,6 +148,127 @@ public static class SelfTest
                        network.Arguments.Contains("--output") == OperatingSystem.IsWindows() && rejected;
             });
 
+            Test("automatic discovery setting roundtrips, stays off for old files, and accepts a CLI override", () =>
+            {
+                string path = Path.Combine(root, "auto-settings.json");
+                var config = new ScanConfiguration { Network = new NetworkConfiguration { AutoStartFileDiscovery = true } };
+                ScanConfiguration.Save(path, config);
+                var enabled = ScanConfiguration.ExpandArguments(new[] { "network-discover", "--config", path });
+                var disabled = ScanConfiguration.ExpandArguments(new[] { "network-inventory", "--config", path, "--no-auto-discover" });
+                File.WriteAllText(path, "{\"formatVersion\":2,\"discover\":{},\"network\":{},\"passwords\":{}}");
+                return NetworkFileDiscovery.IsEnabled(enabled.Arguments) && !NetworkFileDiscovery.IsEnabled(disabled.Arguments) &&
+                    !ScanConfiguration.Load(path).Network.AutoStartFileDiscovery &&
+                    !NetworkFileDiscovery.IsEnabled(new[] { "network-discover", "--linux-password", "--auto-discover" });
+            });
+
+            Test("automatic discovery excludes saved targets and preserves relative paths and credential options", () =>
+            {
+                string directory = Path.Combine(root, "auto-config");
+                string path = Path.Combine(directory, "settings.json");
+                var config = new ScanConfiguration
+                {
+                    Discover = new DiscoverConfiguration
+                    {
+                        LocalRoots = new() { "old-root" }, WindowsHosts = new() { "old-windows" },
+                        WindowsHostsFile = "old-windows.txt", LinuxHosts = new() { "old-linux" }, LinuxHostsFile = "old-linux.txt",
+                        LinuxRoots = new() { "/srv" }, LinuxUsername = "reader", Manifest = "results/files.json", MaxCpuPercent = 45
+                    }
+                };
+                ScanConfiguration.Save(path, config);
+                string[] args = NetworkFileDiscovery.BuildFileArguments(new[]
+                {
+                    "network-discover", "--config", path, "--output", "hosts.json", "--auto-discover",
+                    "--max-cpu-percent", "30", "--linux-password", "fixture-secret", "--config-passphrase-stdin"
+                }, ScanConfiguration.Load(path));
+                NetworkFileDiscovery.ValidateSettings(args, false);
+                bool rejected = false;
+                try { NetworkFileDiscovery.BuildFileArguments(new[] { "network-discover", "--root", root }, config); }
+                catch (ArgumentException) { rejected = true; }
+                return rejected && !args.Contains("--root") && !args.Contains("--host") && !args.Contains("--hosts-file") &&
+                    !args.Contains("--linux-host") && !args.Contains("--linux-hosts-file") && !args.Contains("--output") &&
+                    NetworkFileDiscovery.Value(args, "--manifest") == Path.Combine(directory, "results", "files.json") &&
+                    NetworkFileDiscovery.Value(args, "--max-cpu-percent") == "30" &&
+                    NetworkFileDiscovery.Value(args, "--linux-password") == "fixture-secret" && args.Contains("--config-passphrase-stdin");
+            });
+
+            Test("automatic discovery selects live services, deduplicates, honors scope exclusions and custom SSH ports", () =>
+            {
+                NetworkDiscoveredHost Host(string ip, string reachability, params int[] ports) => new(
+                    ip, null, null, reachability, false, null, ports, "Unknown", "fixture", Array.Empty<string>(), Array.Empty<string>(), DateTime.UtcNow);
+                var inventory = new NetworkInventoryManifest
+                {
+                    Scopes = new[] { new NetworkDiscoveryScope("192.168.40.0/24", "fixture", null, null, 254, true) },
+                    ExcludedCidrs = new[] { "192.168.40.9/32" },
+                    Hosts = new[]
+                    {
+                        Host("192.168.40.2", "Reachable", 445), Host("192.168.40.2", "Reachable", 445),
+                        Host("192.168.40.3", "Reachable", 2222), Host("192.168.40.4", "Reachable", 445, 2222),
+                        Host("192.168.40.5", "NeighborCacheOnly", 445), Host("192.168.40.6", "Reachable"),
+                        Host("192.168.41.7", "Reachable", 2222), Host("192.168.40.8", "Reachable", 22),
+                        Host("192.168.40.9", "Reachable", 2222), Host("8.8.8.8", "Reachable", 445)
+                    }
+                };
+                var both = NetworkFileDiscovery.SelectTargets(inventory, true, true, 2222);
+                var linuxOnly = NetworkFileDiscovery.SelectTargets(inventory, false, true, 2222);
+                return both.WindowsHosts.SequenceEqual(new[] { "192.168.40.2", "192.168.40.4" }) &&
+                    both.LinuxHosts.SequenceEqual(new[] { "192.168.40.3", "192.168.40.4" }) &&
+                    both.SkippedHosts == 6 && linuxOnly.WindowsHosts.Count == 0 && linuxOnly.LinuxHosts.Count == 2;
+            });
+
+            Test("automatic discovery does not fall back to local roots on empty results or errors", () =>
+            {
+                int starts = 0;
+                int Run(string[] args, ScanConfiguration? config) { starts++; return 7; }
+                string[] args = { "discover", "--linux-username", "reader", "--linux-root", "/srv" };
+                var empty = new NetworkInventoryManifest();
+                int emptyExit = NetworkFileDiscovery.RunAfterInventory(empty, args, null, false, Run);
+                int failedExit = NetworkFileDiscovery.RunAfterInventory(new NetworkInventoryManifest { Errors = new[] { "fixture failure" } }, args, null, false, Run);
+                return starts == 0 && emptyExit == 0 && failedExit == 1 &&
+                    !NetworkFileDiscovery.CanStart(1, false, empty) && !NetworkFileDiscovery.CanStart(0, true, empty) &&
+                    !NetworkFileDiscovery.CanStart(0, false, null);
+            });
+
+            Test("successful automatic discovery invokes the file engine once and returns its exit code", () =>
+            {
+                int starts = 0;
+                var inventory = new NetworkInventoryManifest
+                {
+                    Scopes = new[] { new NetworkDiscoveryScope("192.168.40.0/24", "fixture", null, null, 254, true) },
+                    Hosts = new[] { new NetworkDiscoveredHost("192.168.40.3", null, null, "Reachable", false, null,
+                        new[] { 22 }, "LinuxOrSsh", "SFTP", Array.Empty<string>(), Array.Empty<string>(), DateTime.UtcNow) }
+                };
+                int code = NetworkFileDiscovery.RunAfterInventory(inventory,
+                    new[] { "discover", "--linux-username", "reader", "--linux-root", "/srv" }, null, false,
+                    (args, config) =>
+                    {
+                        starts++;
+                        return args.TakeLast(2).SequenceEqual(new[] { "--linux-host", "192.168.40.3" }) && !args.Contains("--root") ? 7 : 99;
+                    });
+                return NetworkFileDiscovery.CanStart(0, false, inventory) && starts == 1 && code == 7;
+            });
+
+            Test("automatic discovery rejects missing connection settings and colliding output files", () =>
+            {
+                int rejected = 0;
+                foreach (string[] args in new[]
+                {
+                    new[] { "discover" }, new[] { "discover", "--username", "reader" },
+                    new[] { "discover", "--linux-username", "reader" },
+                    new[] { "discover", "--linux-username", "reader", "--linux-root", "/srv", "--ssh-port", "0" },
+                    new[] { "discover", "--linux-username", "reader", "--linux-root", "relative/path" }
+                })
+                {
+                    try { NetworkFileDiscovery.ValidateSettings(args, true); }
+                    catch (ArgumentException) { rejected++; }
+                }
+                foreach (string manifest in new[] { "hosts.json", "hosts.csv" })
+                {
+                    try { NetworkFileDiscovery.ValidateOutputPaths("hosts.json", "hosts.csv", manifest); }
+                    catch (ArgumentException) { rejected++; }
+                }
+                return rejected == 7;
+            });
+
             Test("IPv4 CIDR parser canonicalizes scope and host count", () =>
             {
                 Ipv4Cidr cidr = Ipv4Cidr.Parse("192.168.25.77/24");

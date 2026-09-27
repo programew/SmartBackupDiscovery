@@ -81,7 +81,7 @@ public sealed record NetworkInventoryDiffSummary(
 public sealed class NetworkInventoryManifest
 {
     public string FormatVersion { get; init; } = "1.0";
-    public string ApplicationVersion { get; init; } = "3.5.0";
+    public string ApplicationVersion { get; init; } = "3.6.0";
     public DateTime GeneratedAtUtc { get; init; } = DateTime.UtcNow;
     public HostIdentity ScannerHost { get; init; } = SourceIdentityProvider.GetScannerHostIdentity();
     public IReadOnlyList<NetworkDiscoveryScope> Scopes { get; init; } = Array.Empty<NetworkDiscoveryScope>();

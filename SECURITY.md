@@ -1,10 +1,10 @@
-# SmartBackupDiscovery 3.5 Security Guidance
+# SmartBackupDiscovery 3.6 Security Guidance
 
 ## Security boundary
 
 SmartBackupDiscovery is a discovery and assessment tool. It does not back up, modify, upload or delete discovered files.
 
-`network-discover` is a separate, pre-credential inventory phase. It sends only bounded ICMP and selected TCP connection probes, performs reverse-DNS enrichment, and reads local route/neighbor state. It does not authenticate, enumerate shares, start SSH/SFTP sessions, inspect file metadata or trigger the file-discovery engine.
+`network-discover` is a separate, pre-credential inventory phase. It sends only bounded ICMP and selected TCP connection probes, performs reverse-DNS enrichment, and reads local route/neighbor state. That stage does not authenticate, enumerate shares, start SSH/SFTP sessions or inspect file metadata. In 3.6 the operator can explicitly enable a separate follow-up file scan with the GUI checkbox, `network.autoStartFileDiscovery` in settings, or `--auto-discover`. It uses the configured accounts and shares/roots only for live service hosts found inside the current inventory scope. Exclusions apply to both stages; passive hints and cached-only hosts are never automatic file targets. Empty/failed/cancelled inventory never falls back to local roots or previous host lists. `--no-auto-discover` overrides the saved choice for one CLI run.
 
 ## Network scope and authorization
 
@@ -12,7 +12,7 @@ SmartBackupDiscovery is a discovery and assessment tool. It does not back up, mo
 - Explicit CIDRs are rejected unless `--authorized-scope` is present, and public-address CIDRs are always rejected.
 - Routed private networks, broad on-link networks and out-of-scope neighbor-cache observations are passive suggestions only. They are not probed unless an authorized operator reviews and explicitly supplies the CIDR.
 - `--exclude-cidr`, `--max-hosts`, per-probe timeout, concurrency, probe-start rate and CPU/network policies bound the operation.
-- A TCP connect result is only a service hint. It does not prove the operating system or authorize a later credentialed scan.
+- A TCP connect result is only a service hint and does not prove the operating system. Enabling automatic follow-up is the operator choice to use the configured credentials for eligible hosts in the selected scope; enable it only for systems you manage.
 - ARP/neighbor records may be stale or misleading. Results marked `NeighborCacheOnly` and suggested scopes require human review.
 - No interface address, subnet mask, route, default gateway, firewall policy or VLAN configuration is changed.
 

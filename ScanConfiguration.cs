@@ -15,6 +15,9 @@ public sealed class ScanConfiguration
     public NetworkConfiguration Network { get; set; } = new();
     public ProtectedPasswords Passwords { get; set; } = new();
 
+    [JsonIgnore]
+    internal string BaseDirectory { get; private set; } = Environment.CurrentDirectory;
+
     public static string DefaultPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "SmartBackupDiscovery", "settings.json");
@@ -29,6 +32,7 @@ public sealed class ScanConfiguration
         if (config.FormatVersion != 2 || config.Discover is null || config.Network is null || config.Passwords is null)
             throw new InvalidDataException("Unsupported settings format. Create a new portable configuration and re-enter credentials; Windows-bound encrypted passwords cannot be migrated automatically.");
         PortableSecretProtector.Validate(config.Passwords);
+        config.BaseDirectory = Path.GetDirectoryName(path)!;
         return config;
     }
 
@@ -95,6 +99,8 @@ public sealed class ScanConfiguration
         return (new[] { args[0] }.Concat(defaults).Concat(userArgs.Skip(1)).ToArray(), config);
     }
 
+    internal List<string> FileArguments() => ToArguments(false, BaseDirectory);
+
     private List<string> ToArguments(bool networkMode, string baseDirectory)
     {
         var result = new List<string>();
@@ -118,6 +124,7 @@ public sealed class ScanConfiguration
         static IEnumerable<string> Values(IEnumerable<string>? values) => values ?? Array.Empty<string>();
         if (networkMode)
         {
+            if (Network.AutoStartFileDiscovery) result.Add("--auto-discover");
             foreach (string cidr in Values(Network.Cidrs)) Add(result, "--cidr", cidr);
             foreach (string cidr in Values(Network.Exclusions)) Add(result, "--exclude-cidr", cidr);
             if (Network.Authorized && Network.Cidrs?.Count > 0) result.Add("--authorized-scope");
@@ -181,6 +188,7 @@ public sealed class DiscoverConfiguration
 
 public sealed class NetworkConfiguration
 {
+    public bool AutoStartFileDiscovery { get; set; }
     public List<string> Cidrs { get; set; } = new();
     public List<string> Exclusions { get; set; } = new();
     public bool Authorized { get; set; }
