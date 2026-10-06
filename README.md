@@ -2,6 +2,8 @@
 
 SmartBackupDiscovery is a **discover-only backup-readiness and important-data inventory scanner** for Windows and Linux.
 
+[Project website and sample report](https://smartbackupdiscovery.ffffffff8.chatgpt.site/) · [Download version 3.7.0 source](https://github.com/programew/SmartBackupDiscovery/releases/tag/v3.7.0)
+
 It is designed to answer questions such as:
 
 - What data on this machine or server is likely to be important for backup?
