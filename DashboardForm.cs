@@ -47,6 +47,7 @@ public sealed class DashboardForm : Form
     private readonly TextBox _networkExclusions = new() { Multiline = true, ScrollBars = ScrollBars.Vertical, Height = 48, PlaceholderText = "192.168.10.1/32" };
     private readonly TextBox _networkOutput = new() { Text = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "SmartBackupDiscovery", "network-inventory.json") };
     private readonly CheckBox _networkAuthorized = new() { Text = "I am authorized to inventory the explicit CIDR scope(s)", AutoSize = true };
+    private readonly CheckBox _networkArp = new() { Text = "Use active ARP on connected networks", Checked = true, AutoSize = true };
     private readonly NumericUpDown _networkMaxHosts = new() { Minimum = 1, Maximum = 65536, Value = 4096, Width = 100, ThousandsSeparator = true };
     private readonly NumericUpDown _networkConcurrency = new() { Minimum = 1, Maximum = 256, Value = 32, Width = 80 };
     private readonly NumericUpDown _networkRate = new() { Minimum = 1, Maximum = 10000, Value = 64, Width = 80 };
@@ -149,6 +150,7 @@ public sealed class DashboardForm : Form
         AddRow(fields, "Exclude CIDRs", _networkExclusions, new Label { Text = "subnet or /32", AutoSize = true, Padding = new Padding(6) });
         AddRow(fields, "Network inventory", _networkOutput, MakeSaveFileButton(_networkOutput));
         AddRow(fields, "Explicit-scope authorization", _networkAuthorized, new Label());
+        AddRow(fields, "Local host discovery", _networkArp, new Label());
 
         var limits = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight, WrapContents = true };
         limits.Controls.Add(new Label { Text = "Max hosts", AutoSize = true, Padding = new Padding(0, 7, 3, 0) });
@@ -319,6 +321,7 @@ public sealed class DashboardForm : Form
 
             ProcessStartInfo psi = BuildSelfStartInfo();
             psi.ArgumentList.Add("network-discover");
+            psi.ArgumentList.Add(_networkArp.Checked ? "--arp" : "--no-arp");
             foreach (string cidr in cidrs) { psi.ArgumentList.Add("--cidr"); psi.ArgumentList.Add(cidr); }
             foreach (string cidr in SplitLines(_networkExclusions.Text)) { psi.ArgumentList.Add("--exclude-cidr"); psi.ArgumentList.Add(cidr); }
             if (cidrs.Count > 0) psi.ArgumentList.Add("--authorized-scope");
@@ -385,7 +388,7 @@ public sealed class DashboardForm : Form
                 string.Join(",", x.OpenTcpPorts),
                 x.MacAddress ?? string.Empty))
             .ToList();
-        _networkStatus.Text = $"{inventory.Summary.HostsFound:N0} host(s) found from {inventory.Summary.AddressesConsidered:N0} addresses; {inventory.SuggestedScopes.Count:N0} passive scope hint(s)";
+        _networkStatus.Text = $"{inventory.Summary.HostsFound:N0} host(s) found from {inventory.Summary.AddressesConsidered:N0} addresses; {inventory.Summary.ArpResolvedHosts:N0} ARP response(s); {inventory.SuggestedScopes.Count:N0} passive scope hint(s)";
     }
 
     private void OpenNetworkInventory()
@@ -635,6 +638,7 @@ public sealed class DashboardForm : Form
                 },
                 Network = new NetworkConfiguration
                 {
+                    UseArp = _networkArp.Checked,
                     Cidrs = SplitLines(_networkCidrs.Text),
                     Exclusions = SplitLines(_networkExclusions.Text),
                     Authorized = _networkAuthorized.Checked,
@@ -698,6 +702,7 @@ public sealed class DashboardForm : Form
             _networkCidrs.Text = string.Join(Environment.NewLine, n.Cidrs ?? new());
             _networkExclusions.Text = string.Join(Environment.NewLine, n.Exclusions ?? new());
             _networkAuthorized.Checked = n.Authorized;
+            _networkArp.Checked = n.UseArp;
             _autoFileDiscovery.Checked = n.AutoStartFileDiscovery;
             _networkOutput.Text = ConfigPath(n.Output) ?? string.Empty;
             _networkMaxHosts.Value = Math.Clamp(n.MaxHosts, (int)_networkMaxHosts.Minimum, (int)_networkMaxHosts.Maximum);

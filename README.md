@@ -1,4 +1,4 @@
-# SmartBackupDiscovery 3.6 — .NET 10 Customer Edition
+# SmartBackupDiscovery 3.7 — .NET 10 Customer Edition
 
 SmartBackupDiscovery is a **discover-only backup-readiness and important-data inventory scanner** for Windows and Linux.
 
@@ -15,6 +15,27 @@ It is designed to answer questions such as:
 SmartBackupDiscovery **does not perform the backup itself**. It discovers, classifies, measures and reports.
 
 ---
+
+## New in 3.7: Active local ARP discovery
+
+Network inventory now actively resolves selected addresses on connected Ethernet/Wi-Fi networks. This can find a local device even when it blocks ICMP and has no open TCP service. The Windows GUI checkbox **Use active ARP on connected networks** is enabled by default and saved as `network.useArp`; older settings retain that default. CLI `--no-arp` disables it and `--arp` re-enables it, overriding the saved choice in argument order.
+
+Windows uses the native neighbor resolver with an explicit interface/source address. Linux sends bounded ARP requests through native packet sockets; it needs `CAP_NET_RAW` or root for this signal. No packet-capture driver or external `arping` executable is required. If the backend is unavailable, a warning is recorded and the other enabled signals continue.
+
+ARP is limited to eligible targets in the selected, non-excluded scopes that match a connected local interface. It does not discover or probe additional ranges behind a gateway. Host concurrency, rate and resource limits still apply. Linux sends at most two ARP requests within the per-signal timeout; Windows native requests use OS retries and at most eight outstanding calls. A timed-out Windows call retains its native slot until it finishes; queued addresses are not skipped just because the slots are busy. Stop cancels pending probes; the GUI terminates the active child process.
+
+Fresh ARP results include the MAC and interface in JSON/CSV and appear as `ArpResolved` when no IP/service signal responded. The neighbor cache is read again after probing, but cache-only entries remain `NeighborCacheOnly`. An ARP reply can come from a proxy, so it does not prove a separate device or SMB/SFTP access; repeated ARP-only addresses sharing one MAC are flagged for review. Automatic file discovery still requires an open configured service port and connection settings.
+
+```powershell
+# Default discovery includes active ARP on eligible connected networks.
+SmartBackupDiscovery.exe network-discover
+
+# ARP only, with passive cache and IP/service probes disabled.
+SmartBackupDiscovery.exe network-discover --no-icmp --no-tcp-probes --no-neighbor-cache --no-dns
+
+# Disable active ARP for this run.
+SmartBackupDiscovery.exe network-discover --no-arp
+```
 
 ## New in 3.6: Optional automatic file discovery
 
@@ -1026,6 +1047,8 @@ help
 --probe-port N              Repeatable TCP service-hint port
 --no-tcp-probes             Disable TCP service hints
 --no-icmp                   Disable ICMP probes
+--arp                       Enable active connected-network ARP (default)
+--no-arp                    Disable active ARP; passive cache is independent
 --no-dns                    Disable reverse DNS
 --no-neighbor-cache         Ignore existing ARP/neighbor entries
 --probe-timeout-ms N        Per-signal timeout; default 600 ms

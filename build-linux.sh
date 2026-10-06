@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")"
-echo 'Restoring SmartBackupDiscovery 3.6 net10.0...'
+echo 'Restoring SmartBackupDiscovery 3.7 net10.0...'
 dotnet restore SmartBackupDiscovery.csproj -p:TargetFramework=net10.0
 echo 'Building Linux/cross-platform CLI...'
 dotnet build SmartBackupDiscovery.csproj -c Release -f net10.0 --no-restore

@@ -17,7 +17,10 @@ public sealed record NetworkDiscoveryPolicy(
     int MaxConcurrency,
     int MaxHosts,
     double MaxProbesPerSecond,
-    ResourcePolicy ResourcePolicy);
+    ResourcePolicy ResourcePolicy)
+{
+    public bool UseArp { get; init; } = true;
+}
 
 public sealed record NetworkDiscoveryProgress(
     int HostsCompleted,
@@ -44,7 +47,11 @@ public sealed record NetworkDiscoveredHost(
     string RecommendedTransport,
     IReadOnlyList<string> ScopeCidrs,
     IReadOnlyList<string> Evidence,
-    DateTime LastSeenUtc);
+    DateTime LastSeenUtc)
+{
+    public bool ArpResolved { get; init; }
+    public string? ArpInterfaceName { get; init; }
+}
 
 public sealed record NetworkInventorySummary(
     int AddressesConsidered,
@@ -53,7 +60,10 @@ public sealed record NetworkInventorySummary(
     int LinuxOrSshHosts,
     int MixedServiceHosts,
     int UnknownHosts,
-    int NeighborCacheOnlyHosts);
+    int NeighborCacheOnlyHosts)
+{
+    public int ArpResolvedHosts { get; init; }
+}
 
 public sealed record NetworkHostChange(
     string ChangeType,
@@ -81,7 +91,7 @@ public sealed record NetworkInventoryDiffSummary(
 public sealed class NetworkInventoryManifest
 {
     public string FormatVersion { get; init; } = "1.0";
-    public string ApplicationVersion { get; init; } = "3.6.0";
+    public string ApplicationVersion { get; init; } = "3.7.0";
     public DateTime GeneratedAtUtc { get; init; } = DateTime.UtcNow;
     public HostIdentity ScannerHost { get; init; } = SourceIdentityProvider.GetScannerHostIdentity();
     public IReadOnlyList<NetworkDiscoveryScope> Scopes { get; init; } = Array.Empty<NetworkDiscoveryScope>();

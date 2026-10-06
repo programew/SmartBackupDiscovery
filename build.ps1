@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
-Write-Host 'Restoring SmartBackupDiscovery 3.6...'
+Write-Host 'Restoring SmartBackupDiscovery 3.7...'
 dotnet restore .\SmartBackupDiscovery.csproj
 if ($LASTEXITCODE -ne 0) { throw 'The .NET command failed. See output above.' }
 Write-Host 'Building Windows customer edition...'

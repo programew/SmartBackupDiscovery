@@ -8,13 +8,16 @@ public sealed class NetworkDiscoveryService
 {
     private readonly INetworkHostProbe _probe;
     private readonly Func<IReadOnlyDictionary<string, string>> _neighborCacheReader;
+    private readonly IArpHostProbe _arpProbe;
 
     public NetworkDiscoveryService(
         INetworkHostProbe? probe = null,
-        Func<IReadOnlyDictionary<string, string>>? neighborCacheReader = null)
+        Func<IReadOnlyDictionary<string, string>>? neighborCacheReader = null,
+        IArpHostProbe? arpProbe = null)
     {
         _probe = probe ?? new SystemNetworkHostProbe();
         _neighborCacheReader = neighborCacheReader ?? NeighborCacheReader.ReadIpv4;
+        _arpProbe = arpProbe ?? new SystemArpHostProbe();
     }
 
     public async Task<NetworkInventoryManifest> DiscoverAsync(
@@ -38,6 +41,7 @@ public sealed class NetworkDiscoveryService
 
         var discovered = new ConcurrentBag<NetworkDiscoveredHost>();
         var errors = new ConcurrentQueue<string>();
+        var warnings = new ConcurrentQueue<string>(initialWarnings ?? Array.Empty<string>());
         var rateGate = new AsyncProbeRateGate(policy.MaxProbesPerSecond);
         var governor = new ResourceGovernor(policy.ResourcePolicy);
         var governorGate = new object();
@@ -62,6 +66,9 @@ public sealed class NetworkDiscoveryService
                     governor.AccountNetworkBytes(EstimateProbeBytes(policy), null);
                 }
 
+                Task<ArpProbeObservation?> arpTask = policy.UseArp
+                    ? ProbeArpAsync(target.Address, policy, warnings, token)
+                    : Task.FromResult<ArpProbeObservation?>(null);
                 NetworkProbeObservation observation;
                 try
                 {
@@ -74,22 +81,29 @@ public sealed class NetworkDiscoveryService
                     observation = new NetworkProbeObservation(false, null, Array.Empty<int>(), null);
                 }
 
+                ArpProbeObservation? arp = await arpTask.ConfigureAwait(false);
+                if (arp is not null && policy.ResolveDns && string.IsNullOrWhiteSpace(observation.HostName))
+                    observation = observation with { HostName = await SystemNetworkHostProbe.TryResolveHostNameAsync(
+                        target.Address, policy.ProbeTimeoutMilliseconds, token).ConfigureAwait(false) };
+
                 string ip = target.Address.ToString();
                 bool neighborKnown = neighborCache.TryGetValue(ip, out string? macAddress);
                 bool isScannerAddress = localAddresses.Contains(ip);
                 bool responsive = observation.IcmpReachable || observation.OpenTcpPorts.Count > 0;
-                if (responsive || neighborKnown || isScannerAddress)
+                if (responsive || arp is not null || neighborKnown || isScannerAddress)
                 {
                     IReadOnlyList<int> ports = observation.OpenTcpPorts.Distinct().OrderBy(x => x).ToArray();
                     (string platform, string transport) = Classify(ports);
                     var evidence = new List<string>();
                     if (observation.IcmpReachable) evidence.Add("ICMP echo response");
                     if (ports.Count > 0) evidence.Add("Open TCP ports: " + string.Join(",", ports));
+                    if (arp is not null) evidence.Add($"Fresh ARP resolution on {arp.InterfaceName} from {arp.LocalAddress}; a proxy may answer for an IP");
                     if (neighborKnown) evidence.Add("Present in the scanner host's IPv4 neighbor cache");
                     if (isScannerAddress) evidence.Add("Address belongs to the scanner host");
 
                     string reachability = responsive
                         ? "Reachable"
+                        : arp is not null ? "ArpResolved"
                         : isScannerAddress
                             ? "ScannerAddress"
                             : "NeighborCacheOnly";
@@ -99,7 +113,7 @@ public sealed class NetworkDiscoveryService
                     discovered.Add(new NetworkDiscoveredHost(
                         ip,
                         hostName,
-                        neighborKnown ? macAddress : null,
+                        arp?.MacAddress ?? (neighborKnown ? macAddress : null),
                         reachability,
                         observation.IcmpReachable,
                         observation.RoundtripTimeMilliseconds,
@@ -108,7 +122,11 @@ public sealed class NetworkDiscoveryService
                         transport,
                         target.ScopeCidrs,
                         evidence,
-                        DateTime.UtcNow));
+                        DateTime.UtcNow)
+                    {
+                        ArpResolved = arp is not null,
+                        ArpInterfaceName = arp?.InterfaceName
+                    });
                     Interlocked.Increment(ref found);
                 }
 
@@ -120,12 +138,34 @@ public sealed class NetworkDiscoveryService
                 }
             }).ConfigureAwait(false);
 
+        // ICMP/TCP and active ARP can populate the kernel cache during a scan.
+        // Refresh it once, retaining cached-only status when no fresh reply was
+        // observed by the ARP resolver or the IP/service probes.
+        var finalNeighbors = new Dictionary<string, string>(neighborCache, StringComparer.OrdinalIgnoreCase);
+        if (policy.ReadNeighborCache)
+            foreach (var entry in _neighborCacheReader()) finalNeighbors[entry.Key] = entry.Value;
+        var known = discovered.Select(x => x.IpAddress).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (NetworkProbeTarget target in work)
+        {
+            string ip = target.Address.ToString();
+            if (!known.Contains(ip) && finalNeighbors.TryGetValue(ip, out string? mac))
+                discovered.Add(new NetworkDiscoveredHost(ip, null, mac, "NeighborCacheOnly", false, null,
+                    Array.Empty<int>(), "Unknown", "Manual review required", target.ScopeCidrs,
+                    new[] { "Present in the scanner host's refreshed IPv4 neighbor cache; not confirmed by an active response" }, DateTime.UtcNow));
+        }
         NetworkDiscoveredHost[] hosts = discovered
+            .Select(x => !x.ArpResolved && finalNeighbors.TryGetValue(x.IpAddress, out string? mac) ? x with { MacAddress = mac } : x)
             .OrderBy(x => Ipv4Cidr.ToUInt32(IPAddress.Parse(x.IpAddress)))
             .ToArray();
+        if (policy.UseArp)
+            foreach (string warning in _arpProbe.Warnings) warnings.Enqueue(warning);
+        foreach (var group in hosts.Where(x => x.ArpResolved && !x.IcmpReachable && x.OpenTcpPorts.Count == 0)
+                     .GroupBy(x => $"{x.ArpInterfaceName}|{x.MacAddress}", StringComparer.OrdinalIgnoreCase).Where(x => x.Count() >= 8))
+            warnings.Enqueue($"{group.Count()} ARP-only addresses resolved to the same MAC on one interface; proxy ARP or address aliases may be present. These are not confirmed separate devices.");
+        progress?.Invoke(new NetworkDiscoveryProgress(work.Length, work.Length, hosts.Length, string.Empty));
         NetworkInventorySummary summary = BuildSummary(work.Length, hosts);
         IReadOnlyList<NetworkScopeSuggestion> scopeSuggestions = BuildScopeSuggestions(
-            neighborCache.Keys,
+            finalNeighbors.Keys,
             scopes,
             excludedScopes,
             initialScopeSuggestions);
@@ -138,9 +178,21 @@ public sealed class NetworkDiscoveryService
             Hosts = hosts,
             SuggestedScopes = scopeSuggestions,
             Summary = summary,
-            Warnings = initialWarnings?.ToArray() ?? Array.Empty<string>(),
+            Warnings = warnings.Distinct(StringComparer.Ordinal).ToArray(),
             Errors = errors.ToArray()
         };
+    }
+
+    private async Task<ArpProbeObservation?> ProbeArpAsync(IPAddress address, NetworkDiscoveryPolicy policy,
+        ConcurrentQueue<string> warnings, CancellationToken cancellationToken)
+    {
+        try { return await _arpProbe.ProbeAsync(address, policy.ProbeTimeoutMilliseconds, cancellationToken).ConfigureAwait(false); }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            warnings.Enqueue("Active ARP warning: " + ex.Message);
+            return null;
+        }
     }
 
     internal static Dictionary<uint, HashSet<string>> ExpandTargets(
@@ -190,7 +242,8 @@ public sealed class NetworkDiscoveryService
         hosts.Count(x => x.PlatformHint == "LinuxOrSsh"),
         hosts.Count(x => x.PlatformHint == "MixedServices"),
         hosts.Count(x => x.PlatformHint == "Unknown"),
-        hosts.Count(x => x.Reachability == "NeighborCacheOnly"));
+        hosts.Count(x => x.Reachability == "NeighborCacheOnly"))
+    { ArpResolvedHosts = hosts.Count(x => x.ArpResolved) };
 
     private static IReadOnlyList<NetworkScopeSuggestion> BuildScopeSuggestions(
         IEnumerable<string> neighborAddresses,
@@ -232,8 +285,8 @@ public sealed class NetworkDiscoveryService
 
     private static void ValidatePolicy(NetworkDiscoveryPolicy policy)
     {
-        if (!policy.UseIcmp && policy.TcpPorts.Count == 0 && !policy.ReadNeighborCache)
-            throw new ArgumentException("At least one discovery signal must be enabled: ICMP, a TCP probe port, or neighbor-cache reading.");
+        if (!policy.UseIcmp && policy.TcpPorts.Count == 0 && !policy.ReadNeighborCache && !policy.UseArp)
+            throw new ArgumentException("At least one discovery signal must be enabled: active ARP, ICMP, a TCP probe port, or neighbor-cache reading.");
         if (policy.ProbeTimeoutMilliseconds is < 100 or > 30_000)
             throw new ArgumentOutOfRangeException(nameof(policy.ProbeTimeoutMilliseconds));
         if (policy.MaxConcurrency is < 1 or > 256)
@@ -249,7 +302,7 @@ public sealed class NetworkDiscoveryService
     private static int EstimateProbeBytes(NetworkDiscoveryPolicy policy)
     {
         int probes = policy.TcpPorts.Count + (policy.UseIcmp ? 1 : 0);
-        return Math.Max(128, probes * 256);
+        return Math.Max(128, probes * 256 + (policy.UseArp ? 168 : 0));
     }
 
     private sealed record NetworkProbeTarget(IPAddress Address, IReadOnlyList<string> ScopeCidrs);

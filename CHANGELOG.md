@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.7.0
+
+Released 2026-10-06.
+
+- Added active ARP for selected connected Ethernet/Wi-Fi targets: native Windows neighbor resolution and bounded Linux packet sockets, with explicit source/interface selection. No gateway or address configuration changes.
+- Added the enabled-by-default GUI checkbox, portable `network.useArp` setting and CLI `--arp` / `--no-arp` overrides. Passive cache reading remains independent.
+- Recorded fresh ARP MAC/interface evidence separately from stale cache-only entries; refreshed the neighbor cache after probing. Added ARP counts and JSON/CSV fields.
+- Preserved scope exclusions, overlap deduplication, host concurrency/rate/resource limits and cancellation. Windows native calls retain their bounded slots after caller timeout.
+- Added a fallback warning when native ARP is unavailable, stricter neighbor-cache filtering and a review warning for proxy-like ARP-only results. ARP alone never selects an automatic SMB/SFTP target.
+- Added 16 deterministic ARP regression checks covering wire replies, native layouts, interface/route selection, cache freshness, exclusions, settings, cancellation, concurrency, proxy responses and output/handoff behavior.
+
 ## 3.6.0
 
 Released 2026-09-27.

@@ -68,7 +68,7 @@ public sealed class SystemNetworkHostProbe : INetworkHostProbe
         catch { return null; }
     }
 
-    private static async Task<string?> TryResolveHostNameAsync(
+    internal static async Task<string?> TryResolveHostNameAsync(
         IPAddress address,
         int timeoutMilliseconds,
         CancellationToken cancellationToken)

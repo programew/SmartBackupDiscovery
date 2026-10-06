@@ -169,7 +169,7 @@ internal static class NetworkFileDiscovery
             throw new ArgumentException("File manifest and network inventory JSON/CSV must use different output paths.");
     }
 
-    private static IEnumerable<(string Name, string? Value)> Options(IEnumerable<string> args)
+    internal static IEnumerable<(string Name, string? Value)> Options(IEnumerable<string> args)
     {
         using var iterator = args.GetEnumerator();
         while (iterator.MoveNext())
