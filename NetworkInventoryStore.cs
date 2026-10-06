@@ -92,7 +92,7 @@ public static class NetworkInventoryStore
     private static string BuildCsv(IReadOnlyList<NetworkDiscoveredHost> hosts)
     {
         var output = new StringBuilder();
-        output.AppendLine("ipAddress,hostName,macAddress,reachability,icmpReachable,roundtripMs,openTcpPorts,platformHint,recommendedTransport,scopeCidrs,evidence,lastSeenUtc");
+        output.AppendLine("ipAddress,hostName,macAddress,reachability,icmpReachable,roundtripMs,openTcpPorts,platformHint,recommendedTransport,scopeCidrs,evidence,lastSeenUtc,arpResolved,arpInterfaceName");
         foreach (NetworkDiscoveredHost host in hosts)
         {
             string[] values =
@@ -108,7 +108,9 @@ public static class NetworkInventoryStore
                 host.RecommendedTransport,
                 string.Join(";", host.ScopeCidrs),
                 string.Join(" | ", host.Evidence),
-                host.LastSeenUtc.ToString("O", System.Globalization.CultureInfo.InvariantCulture)
+                host.LastSeenUtc.ToString("O", System.Globalization.CultureInfo.InvariantCulture),
+                host.ArpResolved ? "true" : "false",
+                host.ArpInterfaceName ?? string.Empty
             };
             output.AppendLine(string.Join(",", values.Select(EscapeCsv)));
         }

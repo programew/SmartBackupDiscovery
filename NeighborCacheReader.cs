@@ -27,11 +27,18 @@ public static class NeighborCacheReader
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         if (!File.Exists(path)) return result;
 
-        foreach (string line in File.ReadLines(path).Skip(1))
+        return ParseLinuxLines(File.ReadLines(path));
+    }
+
+    internal static IReadOnlyDictionary<string, string> ParseLinuxLines(IEnumerable<string> lines)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string line in lines.Skip(1))
         {
             string[] fields = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
             if (fields.Length < 6 || !IPAddress.TryParse(fields[0], out IPAddress? address)) continue;
-            if (!fields[2].Equals("0x2", StringComparison.OrdinalIgnoreCase)) continue;
+            if (!uint.TryParse(fields[2].Replace("0x", "", StringComparison.OrdinalIgnoreCase),
+                    System.Globalization.NumberStyles.HexNumber, null, out uint flags) || (flags & 2) == 0) continue;
             string? mac = NormalizeMac(fields[3]);
             if (mac is not null) result[address.ToString()] = mac;
         }
@@ -57,6 +64,7 @@ public static class NeighborCacheReader
             {
                 MibIpNetRow row = Marshal.PtrToStructure<MibIpNetRow>(current);
                 current = IntPtr.Add(current, rowSize);
+                if (row.Type is not (3 or 4)) continue; // Ignore invalid/incomplete entries.
                 int macLength = (int)Math.Min(row.PhysicalAddressLength, 8U);
                 if (macLength <= 0 || row.PhysicalAddress is null) continue;
 
@@ -76,14 +84,14 @@ public static class NeighborCacheReader
     private static string? NormalizeMac(string value)
     {
         string[] parts = value.Replace('-', ':').Split(':', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        if (parts.Length < 6) return null;
+        if (parts.Length != 6) return null;
         var bytes = new List<byte>();
         foreach (string part in parts)
         {
             if (!byte.TryParse(part, System.Globalization.NumberStyles.HexNumber, null, out byte parsed)) return null;
             bytes.Add(parsed);
         }
-        if (bytes.All(x => x == 0) || bytes.All(x => x == 0xFF)) return null;
+        if (!SystemArpHostProbe.IsUnicastMac(bytes.ToArray())) return null;
         return string.Join(":", bytes.Select(x => x.ToString("X2")));
     }
 

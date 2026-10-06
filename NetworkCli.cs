@@ -46,7 +46,8 @@ public static class NetworkCli
             MaxConcurrency: concurrency,
             MaxHosts: maxHosts,
             MaxProbesPerSecond: probeRate,
-            ResourcePolicy: resourcePolicy);
+            ResourcePolicy: resourcePolicy)
+        { UseArp = IsArpEnabled(args) };
 
         string output = Path.GetFullPath(GetOption(args, "--output") ?? Path.Combine(Environment.CurrentDirectory, "network-inventory.json"));
         string csv = Path.GetFullPath(GetOption(args, "--csv") ?? Path.ChangeExtension(output, ".csv"));
@@ -57,13 +58,13 @@ public static class NetworkCli
         string historyDirectory = Path.GetFullPath(GetOption(args, "--network-history-dir") ?? NetworkInventoryHistoryService.GetDefaultHistoryDirectory(output));
         int historyRetain = GetInt(args, "--network-history-retain", 30, 0, 10_000);
 
-        Console.WriteLine("SmartBackupDiscovery 3.6 - controlled automatic network inventory");
+        Console.WriteLine("SmartBackupDiscovery 3.7 - controlled automatic network inventory");
         Console.WriteLine("Network stage: private IPv4 inventory; no authentication, share enumeration or file access.");
         if (afterSuccess is not null) Console.WriteLine("Automatic file discovery is enabled and will start after successful inventory using configured connections.");
         foreach (NetworkDiscoveryScope scope in scopes)
             Console.WriteLine($"Scope: {scope.Cidr} [{scope.Source}] addresses={scope.CandidateAddresses:N0}{(scope.InterfaceName is null ? string.Empty : $" interface={scope.InterfaceName}")}");
         if (exclusions.Count > 0) Console.WriteLine("Excluded: " + string.Join(", ", exclusions.Select(x => x.Canonical)));
-        Console.WriteLine($"Signals: ICMP={policy.UseIcmp}, DNS={policy.ResolveDns}, neighbor-cache={policy.ReadNeighborCache}, TCP=[{string.Join(",", policy.TcpPorts)}]");
+        Console.WriteLine($"Signals: active-ARP={policy.UseArp}, ICMP={policy.UseIcmp}, DNS={policy.ResolveDns}, neighbor-cache={policy.ReadNeighborCache}, TCP=[{string.Join(",", policy.TcpPorts)}]");
         Console.WriteLine($"Limits: hosts={maxHosts:N0}, concurrency={concurrency}, probes/sec={probeRate:0.##}, timeout={timeout}ms, CPU<={maxCpu:0.#}%");
 
         bool progressLineOpen = false;
@@ -143,6 +144,7 @@ public static class NetworkCli
         Console.WriteLine($"Hosts found: {summary.HostsFound:N0} / {summary.AddressesConsidered:N0} addresses considered");
         Console.WriteLine($"  Windows/SMB: {summary.WindowsOrSmbHosts:N0} | Linux/SSH: {summary.LinuxOrSshHosts:N0} | mixed: {summary.MixedServiceHosts:N0} | unknown: {summary.UnknownHosts:N0}");
         Console.WriteLine($"  Neighbor-cache only (may be stale): {summary.NeighborCacheOnlyHosts:N0}");
+        Console.WriteLine($"  Fresh ARP resolutions: {summary.ArpResolvedHosts:N0}");
         if (inventory.Diff.PreviousInventoryAvailable)
             Console.WriteLine($"Since previous comparable inventory: +{inventory.Diff.AddedCount:N0} added, ~{inventory.Diff.ChangedCount:N0} changed, -{inventory.Diff.RemovedCount:N0} removed");
         foreach (string warning in inventory.Warnings) Console.WriteLine("Warning: " + warning);
@@ -156,6 +158,18 @@ public static class NetworkCli
         if (artifacts.ReviewHostsPath is not null) Console.WriteLine("Unclassified host list: " + artifacts.ReviewHostsPath);
         if (artifacts.SuggestedScopesPath is not null) Console.WriteLine("Suggested private scopes: " + artifacts.SuggestedScopesPath);
         Console.WriteLine("Generated lists are service candidates. Automatic mode uses only current in-scope service targets with a configured connection.");
+    }
+
+    internal static bool IsArpEnabled(IEnumerable<string> args)
+    {
+        bool enabled = true;
+        foreach (var option in NetworkFileDiscovery.Options(args))
+        {
+            string arg = option.Name;
+            if (arg.Equals("--arp", StringComparison.OrdinalIgnoreCase)) enabled = true;
+            if (arg.Equals("--no-arp", StringComparison.OrdinalIgnoreCase)) enabled = false;
+        }
+        return enabled;
     }
 
     private static string? GetOption(string[] args, string name)

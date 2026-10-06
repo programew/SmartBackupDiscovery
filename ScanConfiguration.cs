@@ -124,6 +124,7 @@ public sealed class ScanConfiguration
         static IEnumerable<string> Values(IEnumerable<string>? values) => values ?? Array.Empty<string>();
         if (networkMode)
         {
+            result.Add(Network.UseArp ? "--arp" : "--no-arp");
             if (Network.AutoStartFileDiscovery) result.Add("--auto-discover");
             foreach (string cidr in Values(Network.Cidrs)) Add(result, "--cidr", cidr);
             foreach (string cidr in Values(Network.Exclusions)) Add(result, "--exclude-cidr", cidr);
@@ -188,6 +189,7 @@ public sealed class DiscoverConfiguration
 
 public sealed class NetworkConfiguration
 {
+    public bool UseArp { get; set; } = true;
     public bool AutoStartFileDiscovery { get; set; }
     public List<string> Cidrs { get; set; } = new();
     public List<string> Exclusions { get; set; } = new();

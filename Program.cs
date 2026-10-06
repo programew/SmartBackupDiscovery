@@ -252,7 +252,7 @@ public static class Program
                 Console.WriteLine($"Checkpoint: {checkpoint.CheckpointPath}");
             }
 
-            Console.WriteLine("SmartBackupDiscovery 3.6 (.NET 10) - Automatic Network Inventory + Windows/Linux DiscoverOnly + Authorized Linux SFTP");
+            Console.WriteLine("SmartBackupDiscovery 3.7 (.NET 10) - Automatic Network Inventory + Windows/Linux DiscoverOnly + Authorized Linux SFTP");
             Console.WriteLine($"Roots: {(roots.Count == 0 ? "(none reachable)" : string.Join(" | ", roots))}");
             Console.WriteLine($"Office protection inspection: {inspectOffice}, profile: {profile}");
             Console.WriteLine($"Resource policy: CPU <= {maxCpu:0.#}% | network <= {globalNetwork:0.#} Mbps global / {perHostNetwork:0.#} Mbps per UNC host");
@@ -505,7 +505,7 @@ public static class Program
     private static void PrintHelp()
     {
         Console.WriteLine("""
-SmartBackupDiscovery 3.6 (.NET 10 / Windows + Linux) - DiscoverOnly product edition
+SmartBackupDiscovery 3.7 (.NET 10 / Windows + Linux) - DiscoverOnly product edition
 
 Commands:
   gui                        Open the Windows dashboard (Windows build only).
@@ -546,6 +546,8 @@ Controlled automatic network inventory:
   --probe-port <1-65535>     TCP service hint port; repeat. Defaults: 22 and 445.
   --no-tcp-probes            Disable TCP service probes.
   --no-icmp                  Disable ICMP echo probes.
+  --arp                      Enable active ARP on connected Ethernet/Wi-Fi networks (default).
+  --no-arp                   Disable active ARP; cached-neighbor reading is independent.
   --no-dns                   Disable reverse-DNS enrichment.
   --no-neighbor-cache        Ignore the scanner host's ARP/neighbor cache.
   --probe-timeout-ms <n>     Per-signal timeout. Default: 600.

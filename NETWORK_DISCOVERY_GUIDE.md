@@ -17,11 +17,18 @@ SmartBackupDiscovery.exe network-discover
 Without `--cidr`, the application detects private scopes connected to local interfaces and reasonably sized directly connected routes. It collects a limited set of signals for each address:
 
 - ICMP response;
+- fresh ARP resolution on a matching connected Ethernet/Wi-Fi interface (enabled by default);
 - reverse DNS, only for responsive hosts;
-- an existing entry in the scanner host's ARP/neighbor cache;
+- entries in the scanner host's ARP/neighbor cache, refreshed after probing;
 - TCP connectivity to ports 22 and 445 by default (configurable).
 
 ## Explicit authorized scopes
+
+Active ARP can find a local address even when ICMP is blocked and no TCP service is open. It selects a local source/interface, skips targets behind a known next hop, and honors the same selected scopes, exclusions, concurrency and resource limits. It never expands a suggested range. Linux sends at most two ARP requests within the signal timeout through native packet sockets and requires `CAP_NET_RAW` or root. Windows uses its native neighbor resolver, with up to eight outstanding calls; a call can continue using OS retries after the caller timeout, keeping its slot until it ends. Waiting for a slot does not skip an eligible address.
+
+The GUI setting **Use active ARP on connected networks** is saved as `network.useArp`. Use `--no-arp` to disable it for one run or `--arp` to re-enable it after a saved disabled setting. `--no-neighbor-cache` disables passive cache reading independently. If native ARP is unavailable, the warning appears in the log and inventory and other enabled discovery signals continue.
+
+Fresh ARP results include `arpResolved` and `arpInterfaceName`. An ARP-only host has reachability `ArpResolved`; cache-only evidence remains `NeighborCacheOnly`. ARP can be answered by a proxy, so an ARP resolution does not prove a separate device or an accessible SMB/SFTP service. Repeated ARP-only addresses sharing the same MAC/interface are flagged for review. Automatic file discovery still needs a compatible open service port.
 
 For a scope that you have reviewed and are authorized to inventory:
 
@@ -81,6 +88,7 @@ Signals can be disabled individually:
 
 ```text
 --no-icmp
+--no-arp
 --no-dns
 --no-neighbor-cache
 --no-tcp-probes

@@ -3,7 +3,7 @@ using System.Text;
 
 namespace SmartBackupDiscovery;
 
-public static class SelfTest
+public static partial class SelfTest
 {
     public static int Run()
     {
@@ -325,7 +325,7 @@ public static class SelfTest
                 var scopes = new[] { new NetworkDiscoveryScope("192.168.60.0/30", "ExplicitCidr", null, null, 2, true) };
                 NetworkInventoryManifest inventory = new NetworkDiscoveryService(
                         new FakeNetworkHostProbe(observations),
-                        () => neighbors)
+                        () => neighbors, new FakeArpHostProbe())
                     .DiscoverAsync(scopes, Array.Empty<Ipv4Cidr>(), policy)
                     .GetAwaiter().GetResult();
 
@@ -337,6 +337,8 @@ public static class SelfTest
                        inventory.SuggestedScopes.Any(x => x.Cidr == "192.168.61.0/24" && !x.ActivelyProbed) &&
                        inventory.Hosts.All(x => x.IpAddress != "192.168.61.7");
             });
+
+            RunArpTests(Test, root);
 
             Test("network inventory diff reports host additions removals and service changes", () =>
             {
